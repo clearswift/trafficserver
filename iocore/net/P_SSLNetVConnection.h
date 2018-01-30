@@ -228,6 +228,15 @@ public:
         }
       }
       break;
+    case HANDSHAKE_HOOKS_CONNECT_RECEIVED:
+    	if (eventId == TS_EVENT_VCONN_PRE_ACCEPT) {
+    	  retval = true;
+	} else if (eventId == TS_EVENT_SSL_SERVERNAME) {
+	  if (curHook) {
+	    retval = true;
+	  }
+	}
+      break;
     case HANDSHAKE_HOOKS_SNI:
       if (eventId == TS_EVENT_VCONN_PRE_ACCEPT) {
         retval = true;
@@ -297,13 +306,39 @@ public:
   /// Set by asynchronous hooks to request a specific operation.
   SslVConnOp hookOpRequested;
 
+  bool receivedConnect() {
+      // CONNECT has been received and is complete
+      // (but might not have been fully handled yet).
+      return connectParseComplete;
+  }
+
+  HTTPHdr *getConnect() {
+      return &connectMessage;
+  }
+
+  HTTPHdr *getConnectResponse() {
+      return &connectResponse;
+  }
+
+  void setConnectResponseBody(char *body, int64_t length) {
+      connectResponseBody = body;
+      connectResponseBodyLength = length;
+  }
+
 private:
   SSLNetVConnection(const SSLNetVConnection &);
   SSLNetVConnection &operator=(const SSLNetVConnection &);
 
   ts::StringView map_tls_protocol_to_tag(const char *proto_string) const;
   bool update_rbio(bool move_to_socket);
+  int handleConnect();
+  void prepareConnectBuffer();
+  void sendConnectResponse();
 
+  bool connectReceived;
+  bool connectParseBegun;
+  bool connectParseComplete;
+  bool connectHandled;
   bool sslHandShakeComplete;
   bool sslClientRenegotiationAbort;
   bool sslSessionCacheHit;
@@ -321,6 +356,7 @@ private:
   enum SSLHandshakeHookState {
     HANDSHAKE_HOOKS_PRE,
     HANDSHAKE_HOOKS_PRE_INVOKE,
+    HANDSHAKE_HOOKS_CONNECT_RECEIVED,
     HANDSHAKE_HOOKS_SNI,
     HANDSHAKE_HOOKS_CERT,
     HANDSHAKE_HOOKS_CERT_INVOKE,
@@ -331,6 +367,11 @@ private:
   Continuation *npnEndpoint;
   SessionAccept *sessionAcceptPtr;
   bool sslTrace;
+
+  HTTPHdr connectMessage;
+  HTTPHdr connectResponse;
+  char *connectResponseBody = nullptr;
+  int64_t connectResponseBodyLength = 0;
 };
 
 typedef int (SSLNetVConnection::*SSLNetVConnHandler)(int, void *);
