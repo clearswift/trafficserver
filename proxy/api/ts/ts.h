@@ -2447,6 +2447,10 @@ tsapi const char *TSRegisterProtocolTag(char const *tag);
  */
 tsapi TSVConn TSHttpSsnVConnGet(TSHttpSsn ssnp);
 
+tsapi TSReturnCode TSVConnConnectGet(TSVConn vconn, TSMBuffer *bufp, TSMLoc *loc);
+tsapi TSReturnCode TSVConnConnectResponseGet(TSVConn vconn, TSMBuffer *bufp, TSMLoc *loc);
+tsapi void TSVConnConnectResponseBodySet(TSVConn vconn, const char *body, int64_t length);
+
 #ifdef __cplusplus
 }
 #endif /* __cplusplus */

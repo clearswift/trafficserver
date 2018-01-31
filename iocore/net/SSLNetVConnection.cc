@@ -376,11 +376,21 @@ SSLNetVConnection::read_raw_data()
     char *end                = this->handShakeReader->end();
     this->handShakeBioStored = end - start;
 
-    // Sets up the buffer as a read only bio target
-    // Must be reset on each read
-    BIO *rbio = BIO_new_mem_buf(start, this->handShakeBioStored);
-    BIO_set_mem_eof_return(rbio, -1);
-    SSL_set0_rbio(this->ssl, rbio);
+    if (*start != SSL_OP_HANDSHAKE)
+    {
+    	Debug("ssl.handshake", "CONNECT received.");
+        // Not an SSL handshake. Assume it's a CONNECT.
+        this->connectReceived = true;
+    }
+    else
+    {
+    	Debug("ssl.handshake", "Not CONNECT received.");
+	// Sets up the buffer as a read only bio target
+	// Must be reset on each read
+	BIO *rbio = BIO_new_mem_buf(start, this->handShakeBioStored);
+	BIO_set_mem_eof_return(rbio, -1);
+	SSL_set0_rbio(this->ssl, rbio);
+    }
   } else {
     this->handShakeBioStored = 0;
   }
@@ -810,6 +820,10 @@ SSLNetVConnection::SSLNetVConnection()
     sslLastWriteTime(0),
     sslTotalBytesSent(0),
     hookOpRequested(SSL_HOOK_OP_DEFAULT),
+    connectReceived(false),
+    connectParseBegun(false),
+    connectParseComplete(false),
+    connectHandled(false),
     sslHandShakeComplete(false),
     sslClientRenegotiationAbort(false),
     sslSessionCacheHit(false),
@@ -921,6 +935,14 @@ SSLNetVConnection::free(EThread *t)
   } else {
     ink_assert(con.fd == NO_FD);
     THREAD_FREE(this, sslNetVCAllocator, t);
+  }
+
+  connectReceived = false;
+  connectHandled = false;
+  connectParseBegun = false;
+  connectParseComplete = false;
+  if (connectMessage.valid()) {
+      connectMessage.reset();
   }
 }
 int
@@ -1045,6 +1067,113 @@ SSLNetVConnection::sslStartHandShake(int event, int &err)
   }
 }
 
+void SSLNetVConnection::prepareConnectBuffer() {
+    this->connectMessage.m_heap = new_HdrHeap();
+    this->connectMessage.create(HTTP_TYPE_REQUEST);
+    this->connectParseBegun = true;
+
+    // Prepare the response.
+    this->connectResponse.m_heap = new_HdrHeap();
+    this->connectResponse.create(HTTP_TYPE_RESPONSE);
+    this->connectResponse.status_set(HTTP_STATUS_OK);
+}
+
+void SSLNetVConnection::sendConnectResponse() {
+    // Send response.
+
+    int reasonLength;
+    this->connectResponse.reason_get(&reasonLength);
+    if (reasonLength == 0) {
+        // No reason set, default to reason for status
+        const char* reason = http_hdr_reason_lookup(this->connectResponse.status_get());
+        this->connectResponse.reason_set(reason, static_cast<int>(strlen(reason)));
+    }
+
+    if (this->connectResponseBodyLength > 0) {
+        this->connectResponse.set_content_length(this->connectResponseBodyLength);
+    }
+
+    MIOBuffer *buffer = new_MIOBuffer();
+    IOBufferBlock *block;
+    int bufferIndex;
+    int tmp, dumpoffset;
+    int done;
+
+    dumpoffset = 0;
+    do {
+      block = buffer->get_current_block();
+      if (!block || block->write_avail() == 0) {
+        buffer->add_block();
+        block = buffer->get_current_block();
+      }
+
+      bufferIndex = 0;
+      tmp = dumpoffset;
+
+      done = this->connectResponse.print(block->end(), block->write_avail(), &bufferIndex, &tmp);
+
+      dumpoffset += bufferIndex;
+      buffer->fill(bufferIndex);
+    } while (!done);
+
+    char *start = buffer->start();
+    int length = buffer->end() - start;
+
+    // Send headers.
+    int64_t w = socketManager.write(this->con.fd, start, length);
+    // If set, send body.
+    if (this->connectResponseBodyLength > 0) {
+        socketManager.write(this->con.fd, this->connectResponseBody, this->connectResponseBodyLength);
+    }
+    free_MIOBuffer(buffer);
+}
+
+int SSLNetVConnection::handleConnect() {
+	if (!this->connectParseBegun) {
+		prepareConnectBuffer();
+	}
+	if (! this->connectParseComplete) {
+	    const char *start = this->handShakeReader->start();
+	    const char *end = this->handShakeReader->end();
+		HTTPParser *parser = reinterpret_cast<HTTPParser *>(ats_malloc(sizeof(HTTPParser)));
+		http_parser_init(parser);
+		ParseResult result = this->connectMessage.parse_req(parser, &start, end, false);
+		// Clean up the parser before continuing.
+		http_parser_clear(parser);
+		ats_free(parser);
+		if (result == PARSE_RESULT_CONT) {
+			return SSL_HANDSHAKE_WANT_READ;
+		} else if (result == PARSE_RESULT_ERROR) {
+			return EVENT_ERROR;
+		}
+		// Otherwise we're done.
+		this->connectParseComplete = true;
+	}
+
+	// Process CONNECT_RECEIVED events here.
+	if (sslHandshakeHookState == HANDSHAKE_HOOKS_CONNECT_RECEIVED) {
+		if (!curHook) {
+			curHook = ssl_hooks->get(TS_CONNECT_RECEIVED_INTERNAL_HOOK);
+		} else {
+			curHook = curHook->next();
+		}
+		if (curHook != nullptr) {
+			ContWrapper::wrap(nh->mutex.get(), curHook->m_cont, TS_EVENT_CONNECT_RECEIVED, this);
+			return SSL_WAIT_FOR_HOOK;
+		}
+	}
+
+	// Clear handshake buffers.
+	this->free_handshake_buffers();
+	this->initialize_handshake_buffers();
+
+	sendConnectResponse();
+
+	this->connectHandled = true;
+	Debug("ssl.handshake", "Connect processed.");
+	return SSL_HANDSHAKE_WANT_READ;
+}
+
 int
 SSLNetVConnection::sslServerHandShakeEvent(int &err)
 {
@@ -1061,9 +1190,9 @@ SSLNetVConnection::sslServerHandShakeEvent(int &err)
     } else {
       curHook = curHook->next();
     }
-    // If no more hooks, move onto SNI
+    // If no more hooks, move onto possible CONNECT received
     if (nullptr == curHook) {
-      sslHandshakeHookState = HANDSHAKE_HOOKS_SNI;
+      sslHandshakeHookState = HANDSHAKE_HOOKS_CONNECT_RECEIVED;
     } else {
       sslHandshakeHookState = HANDSHAKE_HOOKS_PRE_INVOKE;
       ContWrapper::wrap(nh->mutex.get(), curHook->m_cont, TS_EVENT_VCONN_PRE_ACCEPT, this);
@@ -1088,6 +1217,12 @@ SSLNetVConnection::sslServerHandShakeEvent(int &err)
     sslHandShakeComplete = true;
     return EVENT_DONE;
   }
+  if (this->connectReceived && !this->connectHandled) {
+    auto ret = handleConnect();
+    if (ret != SSL_HANDSHAKE_WANT_READ) {
+    	return ret;
+    }
+  }
 
   Debug("ssl", "Go on with the handshake state=%d", sslHandshakeHookState);
 
@@ -1100,6 +1235,18 @@ SSLNetVConnection::sslServerHandShakeEvent(int &err)
         // Read from socket to fill in the BIO buffer with the
         // raw handshake data before calling the ssl accept calls.
         int retval = this->read_raw_data();
+        if (this->connectReceived && !this->connectHandled) {
+            if (retval == -EAGAIN) {
+                // More data to read so keep reading.
+                return SSL_HANDSHAKE_WANT_READ;
+        	}
+        	return handleConnect();
+        } else {
+            if (sslHandshakeHookState == HANDSHAKE_HOOKS_CONNECT_RECEIVED) {
+                // No CONNECT, move state to SNI.
+                sslHandshakeHookState = HANDSHAKE_HOOKS_SNI;
+            }
+        }
         if (retval < 0) {
           if (retval == -EAGAIN) {
             // No data at the moment, hang tight
@@ -1442,6 +1589,8 @@ SSLNetVConnection::reenable(NetHandler *nh)
     if (sslHandshakeHookState == HANDSHAKE_HOOKS_CERT) {
       sslHandshakeHookState = HANDSHAKE_HOOKS_CERT_INVOKE;
       curHook->invoke(TS_EVENT_SSL_CERT, this);
+    } else if (sslHandshakeHookState == HANDSHAKE_HOOKS_CONNECT_RECEIVED) {
+      curHook->invoke(TS_EVENT_CONNECT_RECEIVED, this);
     } else if (sslHandshakeHookState == HANDSHAKE_HOOKS_SNI) {
       curHook->invoke(TS_EVENT_SSL_SERVERNAME, this);
     } else if (sslHandshakeHookState == HANDSHAKE_HOOKS_PRE) {
@@ -1455,6 +1604,9 @@ SSLNetVConnection::reenable(NetHandler *nh)
     switch (this->sslHandshakeHookState) {
     case HANDSHAKE_HOOKS_PRE:
     case HANDSHAKE_HOOKS_PRE_INVOKE:
+      sslHandshakeHookState = HANDSHAKE_HOOKS_SNI;
+      break;
+    case HANDSHAKE_HOOKS_CONNECT_RECEIVED:
       sslHandshakeHookState = HANDSHAKE_HOOKS_SNI;
       break;
     case HANDSHAKE_HOOKS_SNI:
