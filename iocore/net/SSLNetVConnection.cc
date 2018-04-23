@@ -953,6 +953,8 @@ SSLNetVConnection::free(EThread *t)
     connectResponse.reset();
   }
 
+  removeAllCustomProperties();
+
   if (from_accept_thread) {
     sslNetVCAllocator.free(this);
   } else {

@@ -856,6 +856,7 @@ typedef struct tsapi_protocol_set *TSNextProtocolSet;
 typedef void *(*TSThreadFunc)(void *data);
 typedef int (*TSEventFunc)(TSCont contp, TSEvent event, void *edata);
 typedef void (*TSConfigDestroyFunc)(void *data);
+typedef void (*TSCustomPropertyDestroyFunc)(void *data);
 
 typedef struct {
   int success_event_id;

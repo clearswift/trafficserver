@@ -1187,6 +1187,10 @@ tsapi TSConfig TSConfigGet(unsigned int id);
 tsapi void TSConfigRelease(unsigned int id, TSConfig configp);
 tsapi void *TSConfigDataGet(TSConfig configp);
 
+tsapi void TSVConnCustomPropertyAdd(TSVConn connp, const char *name, void *data, TSCustomPropertyDestroyFunc funcp);
+tsapi void TSVConnCustomPropertyRemove(TSVConn connp, const char *name);
+tsapi void *TSVConnCustomPropertyGet(TSVConn connp, const char *name);
+
 /* --------------------------------------------------------------------------
    Management */
 tsapi void TSMgmtUpdateRegister(TSCont contp, const char *plugin_name);
@@ -1245,6 +1249,9 @@ int TSAcceptorIDGet(TSAcceptor acceptor);
 
 // Returns 1 if the sslp argument refers to a SSL connection
 tsapi int TSVConnIsSsl(TSVConn sslp);
+
+/* Get the VConn associated with the specified SSL connection.  */
+tsapi TSVConn TSGetVConnFromSsl(TSSslConnection sslConnection);
 
 /* --------------------------------------------------------------------------
    HTTP transactions */
@@ -1314,6 +1321,9 @@ tsapi void TSHttpTxnClientIncomingPortSet(TSHttpTxn txnp, int port);
     @return SSL object of this session
  */
 tsapi void *TSHttpSsnSSLConnectionGet(TSHttpSsn ssnp); // returns SSL *
+
+/** Get the outgoing VConn for the specified transaction. */
+tsapi TSVConn TSHttpTxnOutgoingVConn(TSHttpTxn txnp);
 
 /** Get client address for transaction @a txnp.
     Retrieves the socket address of the remote client that has
@@ -1537,6 +1547,7 @@ tsapi void TSHttpTxnDNSTimeoutSet(TSHttpTxn txnp, int timeout);
 tsapi void TSHttpTxnNoActivityTimeoutSet(TSHttpTxn txnp, int timeout);
 
 tsapi TSServerState TSHttpTxnServerStateGet(TSHttpTxn txnp);
+tsapi void TSHttpTxnServerStateSet(TSHttpTxn txnp, TSServerState s);
 
 /* --------------------------------------------------------------------------
    Transaction specific debugging control  */

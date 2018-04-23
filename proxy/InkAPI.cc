@@ -6083,6 +6083,15 @@ TSHttpTxnServerStateGet(TSHttpTxn txnp)
 }
 
 void
+TSHttpTxnServerStateSet(TSHttpTxn txnp, TSServerState state)
+{
+  sdk_assert(sdk_sanity_check_txn(txnp) == TS_SUCCESS);
+
+  HttpTransact::State *s = &(((HttpSM *)txnp)->t_state);
+  s->current.state = (HttpTransact::ServerState_t)state;
+}
+
+void
 TSHttpTxnDebugSet(TSHttpTxn txnp, int on)
 {
   sdk_assert(sdk_sanity_check_txn(txnp) == TS_SUCCESS);
@@ -9597,4 +9606,69 @@ void TSVConnConnectResponseBodySet(TSVConn vconn, const char *body, int64_t leng
     SSLNetVConnection *ssl_vc = dynamic_cast<SSLNetVConnection *>(vc);
 
     ssl_vc->setConnectResponseBody(const_cast<char *>(body), length);
+}
+
+TSVConn TSGetVConnFromSsl(TSSslConnection sslConnection)
+{
+  SSL* ssl = reinterpret_cast<SSL*>(sslConnection);
+  return ssl == nullptr ? nullptr : reinterpret_cast<TSVConn>(SSLNetVCAccess(ssl));
+}
+
+TSVConn TSHttpTxnOutgoingVConn(TSHttpTxn txnp)
+{
+  sdk_assert(sdk_sanity_check_txn(txnp) == TS_SUCCESS);
+
+  NetVConnection *vc = nullptr;
+
+  HttpSM *sm = reinterpret_cast<HttpSM *>(txnp);
+
+  if (sm != nullptr)
+  {
+    HttpServerSession *ssn = sm->get_server_session();
+    if (ssn != nullptr)
+    {
+      vc = ssn->get_netvc();
+    }
+  }
+
+  return reinterpret_cast<TSVConn>(vc);
+}
+
+void TSVConnCustomPropertyAdd(TSVConn connp, const char *name, void *data, TSCustomPropertyDestroyFunc funcp)
+{
+  sdk_assert(sdk_sanity_check_iocore_structure(connp) == TS_SUCCESS);
+
+  NetVConnection *vc = (NetVConnection *)connp;
+
+  if (vc != nullptr)
+  {
+    vc->addCustomProperty(name, data, funcp);
+  }
+}
+
+void TSVConnCustomPropertyRemove(TSVConn connp, const char *name)
+{
+  sdk_assert(sdk_sanity_check_iocore_structure(connp) == TS_SUCCESS);
+
+  NetVConnection *vc = (NetVConnection *)connp;
+
+  if (vc != nullptr)
+  {
+    vc->removeCustomProperty(name);
+  }
+}
+
+void* TSVConnCustomPropertyGet(TSVConn connp, const char *name)
+{
+  void *p = 0;
+  sdk_assert(sdk_sanity_check_iocore_structure(connp) == TS_SUCCESS);
+
+  NetVConnection *vc = (NetVConnection *)connp;
+
+  if (vc != nullptr)
+  {
+    p = vc->getCustomProperty(name);
+  }
+
+  return p;
 }
