@@ -558,7 +558,6 @@ public:
   void addCustomProperty(const char *name, void *data, void (*f)(void*)) { customProperties.add(name,data,f); }
   void removeCustomProperty(const char *name) { customProperties.remove(name); }
   void* getCustomProperty(const char *name) { return customProperties.get(name); }
-  void removeAllCustomProperties() { customProperties.clear(); }
 private:
   CustomProperties customProperties;
 public:
