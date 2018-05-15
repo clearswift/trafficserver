@@ -9608,12 +9608,6 @@ void TSVConnConnectResponseBodySet(TSVConn vconn, const char *body, int64_t leng
     ssl_vc->setConnectResponseBody(const_cast<char *>(body), length);
 }
 
-TSVConn TSGetVConnFromSsl(TSSslConnection sslConnection)
-{
-  SSL* ssl = reinterpret_cast<SSL*>(sslConnection);
-  return ssl == nullptr ? nullptr : reinterpret_cast<TSVConn>(SSLNetVCAccess(ssl));
-}
-
 TSVConn TSHttpTxnOutgoingVConn(TSHttpTxn txnp)
 {
   sdk_assert(sdk_sanity_check_txn(txnp) == TS_SUCCESS);
