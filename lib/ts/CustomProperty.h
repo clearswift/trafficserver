@@ -1,6 +1,6 @@
 /** @file
 
-  A map for storing void* values keyed on a name string.
+  A brief file description
 
   @section license License
 
@@ -41,7 +41,6 @@
 #define CUSTOM_PROPERTY_H
 
 #include <map>
-#include <memory>
 #include <string>
 
 //
@@ -51,17 +50,23 @@ class CustomProperties
 {
 public:
   CustomProperties();
-  CustomProperties(const CustomProperties&) = delete;
-  CustomProperties operator=(const CustomProperties&) = delete;
+  ~CustomProperties();
   void add(const char *name, void *value, void(*destroyValue)(void*));
   void remove(const char *name);
   void* get(const char *name);
-  void clear();
 private:
+  CustomProperties(const CustomProperties&);
+  CustomProperties operator=(const CustomProperties&);
 
-  typedef std::unique_ptr<void, void(*)(void*)> PropertyValue;
+  struct PropertyValue
+  {
+      PropertyValue(void *value = nullptr, void(*destroyFunc)(void*) = nullptr);
+      void *m_value;
+      void (*m_destroyFunc)(void*);
+      void destroy();
+  };
 
-  std::unique_ptr<std::map<std::string, PropertyValue>> m_properties;
+  std::map<std::string, PropertyValue>* m_properties;
 };
 
 #endif

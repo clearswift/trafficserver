@@ -1,27 +1,51 @@
 #include "CustomProperty.h"
 
-CustomProperties::CustomProperties()
-  : m_properties(new std::map<std::string, PropertyValue>())
+CustomProperties::PropertyValue::PropertyValue(void *value, void(*destroyFunc)(void*))
+  : m_value(value), m_destroyFunc(destroyFunc)
 {
-  /**
-    Should not be necessary to dynamically allocate storage for
-    this map, but, if not dynamically allocated, then
-    insertions got segmentation faults:
-      Thread #4 [[ET_NET 1]] 28415 [core: 1] (Suspended : Signal : SIGSEGV:Segmentation fault)
-        std::_Rb_tree_decrement() at 0x3591869eca
-        std::_Rb_tree_iterator<std::pair<std::string const, CustomProperties::PropertyValue> >::operator--() at stl_tree.h:224 0x2b6f90fd7471
-        std::_Rb_tree<std::string, std::pair<std::string const, CustomProperties::PropertyValue>, std::_Select1st<std::pair<std::string const, CustomProperties::PropertyValue> >, std::less<std::string>, std::allocator<std::pair<std::string const, CustomProperties::PropertyValue> > >::_M_get_insert_unique_pos() at stl_tree.h:1,845 0x2b6f90fd6f97
-        std::_Rb_tree<std::string, std::pair<std::string const, CustomProperties::PropertyValue>, std::_Select1st<std::pair<std::string const, CustomProperties::PropertyValue> >, std::less<std::string>, std::allocator<std::pair<std::string const, CustomProperties::PropertyValue> > >::_M_insert_unique<std::pair<char const*, CustomProperties::PropertyValue> >() at stl_tree.h:1,889 0x2b6f90fd6b14
-        std::map<std::string, CustomProperties::PropertyValue, std::less<std::string>, std::allocator<std::pair<std::string const, CustomProperties::PropertyValue> > >::insert<std::pair<char const*, CustomProperties::PropertyValue>, void>() at stl_map.h:740 0x2b6f90fd68a8
-        CustomProperties::add() at CustomProperty.cc:36 0x2b6f90fd645b
-        NetVConnection::addCustomProperty() at I_NetVConnection.h:558 0x546978
-  */
+}
+
+void CustomProperties::PropertyValue::destroy()
+{
+  if ((m_destroyFunc != nullptr) && (m_value != nullptr))
+  {
+    m_destroyFunc(m_value);
+    m_destroyFunc = nullptr;
+    m_value = nullptr;
+  }
+}
+
+CustomProperties::CustomProperties() 
+{
+    /**
+      Should not be necessary to dynamically allocate storage for
+      this map, but, if not dynamically allocated, then
+      insertions got segmentation faults:
+        Thread #4 [[ET_NET 1]] 28415 [core: 1] (Suspended : Signal : SIGSEGV:Segmentation fault)
+          std::_Rb_tree_decrement() at 0x3591869eca
+          std::_Rb_tree_iterator<std::pair<std::string const, CustomProperties::PropertyValue> >::operator--() at stl_tree.h:224 0x2b6f90fd7471
+          std::_Rb_tree<std::string, std::pair<std::string const, CustomProperties::PropertyValue>, std::_Select1st<std::pair<std::string const, CustomProperties::PropertyValue> >, std::less<std::string>, std::allocator<std::pair<std::string const, CustomProperties::PropertyValue> > >::_M_get_insert_unique_pos() at stl_tree.h:1,845 0x2b6f90fd6f97
+          std::_Rb_tree<std::string, std::pair<std::string const, CustomProperties::PropertyValue>, std::_Select1st<std::pair<std::string const, CustomProperties::PropertyValue> >, std::less<std::string>, std::allocator<std::pair<std::string const, CustomProperties::PropertyValue> > >::_M_insert_unique<std::pair<char const*, CustomProperties::PropertyValue> >() at stl_tree.h:1,889 0x2b6f90fd6b14
+          std::map<std::string, CustomProperties::PropertyValue, std::less<std::string>, std::allocator<std::pair<std::string const, CustomProperties::PropertyValue> > >::insert<std::pair<char const*, CustomProperties::PropertyValue>, void>() at stl_map.h:740 0x2b6f90fd68a8
+          CustomProperties::add() at CustomProperty.cc:36 0x2b6f90fd645b
+          NetVConnection::addCustomProperty() at I_NetVConnection.h:558 0x546978
+    */
+    m_properties = new std::map<std::string, PropertyValue>();
+}
+
+CustomProperties::~CustomProperties()
+{
+  for ( auto entry : *m_properties )
+  {
+    entry.second.destroy();
+  }
+  delete m_properties;
 }
 
 void CustomProperties::add(const char *name, void *value, void(*destroyValue)(void*))
 {
   remove(name);
-  m_properties->emplace(std::make_pair(name, PropertyValue{value, destroyValue}));
+  m_properties->insert(std::make_pair(name, PropertyValue(value, destroyValue)));
 }
 
 void CustomProperties::remove(const char *name)
@@ -29,6 +53,7 @@ void CustomProperties::remove(const char *name)
   auto i = m_properties->find(name);
   if ( i != m_properties->end())
   {
+    i->second.destroy();
     m_properties->erase(i);
   }
 }
@@ -36,10 +61,5 @@ void CustomProperties::remove(const char *name)
 void* CustomProperties::get(const char *name)
 { 
   auto i = m_properties->find(name);
-  return i == m_properties->end() ? nullptr : i->second.get();
-}
-
-void CustomProperties::clear()
-{
-  m_properties->clear();
+  return i == m_properties->end() ? nullptr : i->second.m_value;
 }
