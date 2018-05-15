@@ -1187,9 +1187,9 @@ tsapi TSConfig TSConfigGet(unsigned int id);
 tsapi void TSConfigRelease(unsigned int id, TSConfig configp);
 tsapi void *TSConfigDataGet(TSConfig configp);
 
-tsapi void TSVConnCustomPropertyAdd(TSVConn connp, const char *name, void *data, TSCustomPropertyDestroyFunc funcp);
-tsapi void TSVConnCustomPropertyRemove(TSVConn connp, const char *name);
-tsapi void *TSVConnCustomPropertyGet(TSVConn connp, const char *name);
+tsapi void TSCustomPropertyAdd(TSVConn connp, const char *name, void *data, TSCustomPropertyDestroyFunc funcp);
+tsapi void TSCustomPropertyRemove(TSVConn connp, const char *name);
+tsapi void *TSCustomPropertyGet(TSVConn connp, const char *name);
 
 /* --------------------------------------------------------------------------
    Management */

@@ -9634,7 +9634,7 @@ TSVConn TSHttpTxnOutgoingVConn(TSHttpTxn txnp)
   return reinterpret_cast<TSVConn>(vc);
 }
 
-void TSVConnCustomPropertyAdd(TSVConn connp, const char *name, void *data, TSCustomPropertyDestroyFunc funcp)
+void TSCustomPropertyAdd(TSVConn connp, const char *name, void *data, TSCustomPropertyDestroyFunc funcp)
 {
   sdk_assert(sdk_sanity_check_iocore_structure(connp) == TS_SUCCESS);
 
@@ -9646,7 +9646,7 @@ void TSVConnCustomPropertyAdd(TSVConn connp, const char *name, void *data, TSCus
   }
 }
 
-void TSVConnCustomPropertyRemove(TSVConn connp, const char *name)
+void TSCustomPropertyRemove(TSVConn connp, const char *name)
 {
   sdk_assert(sdk_sanity_check_iocore_structure(connp) == TS_SUCCESS);
 
@@ -9658,7 +9658,7 @@ void TSVConnCustomPropertyRemove(TSVConn connp, const char *name)
   }
 }
 
-void* TSVConnCustomPropertyGet(TSVConn connp, const char *name)
+void* TSCustomPropertyGet(TSVConn connp, const char *name)
 {
   void *p = 0;
   sdk_assert(sdk_sanity_check_iocore_structure(connp) == TS_SUCCESS);
