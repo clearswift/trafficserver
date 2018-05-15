@@ -29,7 +29,6 @@
 #include "I_Action.h"
 #include "I_VConnection.h"
 #include "I_Event.h"
-#include "ts/CustomProperty.h"
 #include "ts/List.h"
 #include "I_IOBuffer.h"
 #include "I_Socks.h"
@@ -554,13 +553,6 @@ public:
   {
     return netvc_context;
   }
-
-  void addCustomProperty(const char *name, void *data, void (*f)(void*)) { customProperties.add(name,data,f); }
-  void removeCustomProperty(const char *name) { customProperties.remove(name); }
-  void* getCustomProperty(const char *name) { return customProperties.get(name); }
-private:
-  CustomProperties customProperties;
-public:
 
   /** Structure holding user options. */
   NetVCOptions options;
