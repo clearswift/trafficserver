@@ -1187,10 +1187,6 @@ tsapi TSConfig TSConfigGet(unsigned int id);
 tsapi void TSConfigRelease(unsigned int id, TSConfig configp);
 tsapi void *TSConfigDataGet(TSConfig configp);
 
-tsapi void TSVConnCustomPropertyAdd(TSVConn connp, const char *name, void *data, TSCustomPropertyDestroyFunc funcp);
-tsapi void TSVConnCustomPropertyRemove(TSVConn connp, const char *name);
-tsapi void *TSVConnCustomPropertyGet(TSVConn connp, const char *name);
-
 /* --------------------------------------------------------------------------
    Management */
 tsapi void TSMgmtUpdateRegister(TSCont contp, const char *plugin_name);
@@ -1249,9 +1245,6 @@ int TSAcceptorIDGet(TSAcceptor acceptor);
 
 // Returns 1 if the sslp argument refers to a SSL connection
 tsapi int TSVConnIsSsl(TSVConn sslp);
-
-/* Get the VConn associated with the specified SSL connection.  */
-tsapi TSVConn TSGetVConnFromSsl(TSSslConnection sslConnection);
 
 /* --------------------------------------------------------------------------
    HTTP transactions */
