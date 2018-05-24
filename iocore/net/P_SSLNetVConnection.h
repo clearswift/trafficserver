@@ -374,6 +374,11 @@ private:
   HTTPHdr connectResponse;
   char *connectResponseBody = nullptr;
   int64_t connectResponseBodyLength = 0;
+
+    // CRTODO
+    bool sentConnect = false;
+    bool readConnectResponse = false;
+
 };
 
 typedef int (SSLNetVConnection::*SSLNetVConnHandler)(int, void *);

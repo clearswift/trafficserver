@@ -35,6 +35,9 @@
 #include <climits>
 #include <string>
 
+// CRTODO
+#include <sstream>
+
 #if !TS_USE_SET_RBIO
 // Defined in SSLInternal.c, should probably make a separate include
 // file for this at some point
@@ -960,6 +963,9 @@ SSLNetVConnection::free(EThread *t)
     THREAD_FREE(this, sslNetVCAllocator, t);
   }
 
+    // CRTODO
+    sentConnect = false;
+    readConnectResponse = false;
 }
 int
 SSLNetVConnection::sslStartHandShake(int event, int &err)
@@ -1051,6 +1057,51 @@ SSLNetVConnection::sslStartHandShake(int event, int &err)
           return EVENT_ERROR;
         }
       }
+
+                // CRTODO
+
+                if (!sentConnect)
+                {
+                    //std::cout << "Name: " << this->options.sni_servername.get() << std::endl;
+
+                    // TODO - IP addresses - or pass in server name in API function
+                    std::stringstream strstream;
+                    strstream << "CONNECT " << this->options.sni_servername.get() << " HTTP/1.1\r\nHost: "
+                            << this->options.sni_servername.get() << "\r\n\r\n";
+                    std::string connectString = strstream.str();
+                    int connectLength = connectString.length();
+
+                    // TODO - need to check if all data has been sent and if not send in the future
+                    // by returning SSL_HANDSHAKE_WANT_WRITE
+                    int64_t w = socketManager.write(this->con.fd, (void*) connectString.c_str(), connectLength);
+                    //std::cout << "Write " << w << std::endl;
+
+                    sentConnect = true;
+
+                    return SSL_HANDSHAKE_WANT_READ;
+                }
+                else if (!readConnectResponse)
+                {
+                    char responseBuffer[4096];
+
+                    // TODO - need to read into a buffer - may not get whole response in first read
+                    int64_t r = socketManager.read(this->con.fd, (void*) responseBuffer, 4096);
+                    //std::cout << "Read " << r << std::endl;
+
+                    // TODO - need to parse response and check for errors
+                    if (r > 0)
+                    {
+                        readConnectResponse = true;
+                    }
+                    else
+                    {
+                        return SSL_HANDSHAKE_WANT_READ;
+                    }
+                }
+
+
+
+
       this->ssl = make_ssl_connection(clientCTX, this);
       if (this->ssl != nullptr) {
         uint8_t clientVerify = this->options.clientVerificationFlag;
