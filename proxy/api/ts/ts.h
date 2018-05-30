@@ -1491,6 +1491,8 @@ tsapi TSReturnCode TSHttpTxnParentProxyGet(TSHttpTxn txnp, const char **hostname
  */
 tsapi void TSHttpTxnParentProxySet(TSHttpTxn txnp, const char *hostname, int port);
 
+tsapi void TSHttpTxnParentOriginSet(TSHttpTxn txnp, const char *hostname, int port);
+
 tsapi TSReturnCode TSHttpTxnParentSelectionUrlGet(TSHttpTxn txnp, TSMBuffer bufp, TSMLoc obj);
 tsapi TSReturnCode TSHttpTxnParentSelectionUrlSet(TSHttpTxn txnp, TSMBuffer bufp, TSMLoc obj);
 
