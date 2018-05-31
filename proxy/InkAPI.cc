@@ -9628,3 +9628,27 @@ TSVConn TSHttpTxnOutgoingVConn(TSHttpTxn txnp)
   return reinterpret_cast<TSVConn>(vc);
 }
 
+// CRTODO
+TSReturnCode TSVConnUpstreamConnectGet(TSVConn vconn, TSMBuffer *bufp, TSMLoc *loc)
+{
+    sdk_assert(sdk_sanity_check_iocore_structure(vconn) == TS_SUCCESS);
+    sdk_assert(sdk_sanity_check_null_ptr((void * )bufp) == TS_SUCCESS);
+    sdk_assert(sdk_sanity_check_null_ptr((void * )loc) == TS_SUCCESS);
+
+    NetVConnection *vc = reinterpret_cast<NetVConnection *>(vconn);
+    SSLNetVConnection *ssl_vc = dynamic_cast<SSLNetVConnection *>(vc);
+
+    HTTPHdr *hptr = ssl_vc->getUpstreamConnectRequest();
+    if (hptr->valid())
+    {
+        *(reinterpret_cast<HTTPHdr **>(bufp)) = hptr;
+        *loc = reinterpret_cast<TSMLoc>(hptr->m_http);
+        if (sdk_sanity_check_mbuffer(*bufp) == TS_SUCCESS)
+        {
+            hptr->mark_target_dirty();
+            return TS_SUCCESS;
+        }
+    }
+    return TS_ERROR;
+}
+

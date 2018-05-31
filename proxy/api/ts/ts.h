@@ -2455,6 +2455,12 @@ tsapi TSReturnCode TSVConnConnectGet(TSVConn vconn, TSMBuffer *bufp, TSMLoc *loc
 tsapi TSReturnCode TSVConnConnectResponseGet(TSVConn vconn, TSMBuffer *bufp, TSMLoc *loc);
 tsapi void TSVConnConnectResponseBodySet(TSVConn vconn, const char *body, int64_t length);
 
+// CRTODO
+//tsapi void TSVConnUpstreamConnectRequestSet(TSVConn vconn, const char *connectRequest, int64_t length);
+
+tsapi TSReturnCode TSVConnUpstreamConnectGet(TSVConn vconn, TSMBuffer *bufp, TSMLoc *loc);
+
+
 #ifdef __cplusplus
 }
 #endif /* __cplusplus */

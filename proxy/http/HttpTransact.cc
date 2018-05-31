@@ -3592,6 +3592,18 @@ HttpTransact::handle_response_from_parent(State *s)
   DebugTxn("http_trans", "[handle_response_from_parent] (hrfp)");
   HTTP_RELEASE_ASSERT(s->current.server == &s->parent_info);
 
+    // CRTODO
+    // plugin call
+    s->server_info.state = s->current.state;
+    if (s->fp_tsremap_os_response)
+    {
+        s->fp_tsremap_os_response(s->remap_plugin_instance, reinterpret_cast<TSHttpTxn>(s->state_machine),
+                s->current.state);
+    }
+  
+  
+  
+
   // response is from a parent origin server.
   if (is_response_valid(s, &s->hdr_info.server_response) && s->current.request_to == HttpTransact::PARENT_PROXY &&
       !s->parent_result.parent_is_proxy()) {
@@ -7935,6 +7947,19 @@ HttpTransact::build_request(State *s, HTTPHdr *base_request, HTTPHdr *outgoing_r
       DebugTxn("http_trans", "[build_request] adding target to URL for parent proxy");
       outgoing_request->set_url_target_from_host_field();
     }
+
+        // CRTODO
+        // This is not required anymore as can use parent_is_proxy=false in parent.config
+        /*if (strcmp("127.0.0.1", s->parent_result.hostname) != 0)
+        {
+            //URL *outgoing_url = outgoing_request->url_get();
+            //outgoing_request->url_set_as_server_url(outgoing_url);
+
+            HttpTransactHeaders::remove_host_name_from_url(outgoing_request);
+         }*/
+
+
+
   } else if (s->next_hop_scheme == URL_WKSIDX_HTTP || s->next_hop_scheme == URL_WKSIDX_HTTPS ||
              s->next_hop_scheme == URL_WKSIDX_WS || s->next_hop_scheme == URL_WKSIDX_WSS) {
     // Otherwise, remove the URL target from HTTP and Websocket URLs since certain origins

@@ -325,6 +325,22 @@ public:
     connectResponseBodyLength = length;
   }
 
+    // CRTODO
+    HTTPHdr *getUpstreamConnectRequest()
+    {
+        if (this->upstreamConnectRequestHdrHeap == nullptr)
+        {
+            this->upstreamConnectRequestHdrHeap = new HTTPHdr;
+            this->upstreamConnectRequestHdrHeap->m_heap = new_HdrHeap();
+            this->upstreamConnectRequest.m_heap = this->upstreamConnectRequestHdrHeap->m_heap;
+            this->upstreamConnectRequest.create(HTTP_TYPE_REQUEST);
+
+            this->upstreamConnectRequest.method_set("CONNECT", 7);
+        }
+
+        return &upstreamConnectRequest;
+    }
+
 private:
   SSLNetVConnection(const SSLNetVConnection &);
   SSLNetVConnection &operator=(const SSLNetVConnection &);
@@ -334,6 +350,9 @@ private:
   int handleConnect();
   void prepareConnectBuffer();
   void sendConnectResponse();
+
+    // CRTODO
+    int handleUpstreamConnect();
 
   bool connectReceived;
   bool connectParseBegun;
@@ -375,9 +394,16 @@ private:
   char *connectResponseBody = nullptr;
   int64_t connectResponseBodyLength = 0;
 
-    // CRTODO
+
+  // CRTODO
+    HdrHeapSDKHandle *upstreamConnectRequestHdrHeap = nullptr;
+    HTTPHdr upstreamConnectRequest;
+    HdrHeapSDKHandle *upstreamConnectResponseHdrHeap = nullptr;
+    HTTPHdr upstreamConnectResponse;
+
     bool sentConnect = false;
     bool readConnectResponse = false;
+    bool handledUpsteamConnect = false;
 
 };
 
