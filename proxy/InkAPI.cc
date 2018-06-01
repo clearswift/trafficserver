@@ -5775,19 +5775,6 @@ TSHttpTxnParentProxySet(TSHttpTxn txnp, const char *hostname, int port)
   sm->t_state.api_info.parent_proxy_port = port;
 }
 
-void TSHttpTxnParentOriginSet(TSHttpTxn txnp, const char *hostname, int port)
-{
-    sdk_assert(sdk_sanity_check_txn(txnp) == TS_SUCCESS);
-    sdk_assert(sdk_sanity_check_null_ptr((void * )hostname) == TS_SUCCESS);
-    sdk_assert(port > 0);
-
-    HttpSM *sm = (HttpSM *) txnp;
-
-    sm->t_state.api_info.parent_proxy_name = sm->t_state.arena.str_store(hostname, strlen(hostname));
-    sm->t_state.api_info.parent_proxy_port = port;
-    sm->t_state.parent_params->DefaultParent->parent_is_proxy = false;
-}
-
 TSReturnCode
 TSHttpTxnParentSelectionUrlGet(TSHttpTxn txnp, TSMBuffer bufp, TSMLoc obj)
 {
@@ -9641,7 +9628,6 @@ TSVConn TSHttpTxnOutgoingVConn(TSHttpTxn txnp)
   return reinterpret_cast<TSVConn>(vc);
 }
 
-// CRTODO
 TSReturnCode TSVConnUpstreamConnectGet(TSVConn vconn, TSMBuffer *bufp, TSMLoc *loc)
 {
     sdk_assert(sdk_sanity_check_iocore_structure(vconn) == TS_SUCCESS);
@@ -9652,16 +9638,23 @@ TSReturnCode TSVConnUpstreamConnectGet(TSVConn vconn, TSMBuffer *bufp, TSMLoc *l
     SSLNetVConnection *ssl_vc = dynamic_cast<SSLNetVConnection *>(vc);
 
     HTTPHdr *hptr = ssl_vc->getUpstreamConnectRequest();
-    if (hptr->valid())
-    {
+	if (hptr->valid()) {
         *(reinterpret_cast<HTTPHdr **>(bufp)) = hptr;
         *loc = reinterpret_cast<TSMLoc>(hptr->m_http);
-        if (sdk_sanity_check_mbuffer(*bufp) == TS_SUCCESS)
-        {
+		if (sdk_sanity_check_mbuffer(*bufp) == TS_SUCCESS) {
             hptr->mark_target_dirty();
             return TS_SUCCESS;
         }
     }
     return TS_ERROR;
+}
+
+void TSHttpTxnSetParentAsOrigin(TSHttpTxn txnp)
+{
+    sdk_assert(sdk_sanity_check_txn(txnp) == TS_SUCCESS);
+
+    HttpSM *sm = (HttpSM *) txnp;
+
+	sm->t_state.api_info.parent_is_origin = true;
 }
 

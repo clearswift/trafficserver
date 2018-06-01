@@ -35,9 +35,6 @@
 #include <climits>
 #include <string>
 
-// CRTODO
-#include <sstream>
-
 #if !TS_USE_SET_RBIO
 // Defined in SSLInternal.c, should probably make a separate include
 // file for this at some point
@@ -956,32 +953,12 @@ SSLNetVConnection::free(EThread *t)
     connectResponse.reset();
   }
 
-    // CRTODO
-    sentConnect = false;
-    readConnectResponse = false;
+    sentUpstreamConnect = false;
+    upstreamConnectResponseRead = false;
     handledUpsteamConnect = false;
 
-    if (upstreamConnectRequestHdrHeap != nullptr)
-    {
-        upstreamConnectRequestHdrHeap->m_heap->destroy();
-        delete upstreamConnectRequestHdrHeap;
-        upstreamConnectRequestHdrHeap = nullptr;
-    }
-    if (upstreamConnectRequest.valid())
-    {
-        upstreamConnectRequest.reset();
-    }
-
-    if (upstreamConnectResponseHdrHeap != nullptr)
-    {
-        upstreamConnectResponseHdrHeap->m_heap->destroy();
-        delete upstreamConnectResponseHdrHeap;
-        upstreamConnectResponseHdrHeap = nullptr;
-    }
-    if (upstreamConnectResponse.valid())
-    {
-        upstreamConnectResponse.reset();
-    }
+    freeUpstreamConnectRequest();
+    freeUpstreamConnectResponse();
 
   if (from_accept_thread) {
     sslNetVCAllocator.free(this);
@@ -1113,137 +1090,7 @@ SSLNetVConnection::sslStartHandShake(int event, int &err)
   }
 }
 
-int SSLNetVConnection::handleUpstreamConnect()
-{
-    // CRTODO
-    if (!sentConnect)
-    {
-        MIOBuffer *buffer = new_MIOBuffer();
-        IOBufferBlock *block;
-        int bufferIndex;
-        int tmp, dumpoffset;
-        int done;
 
-        dumpoffset = 0;
-        do
-        {
-            block = buffer->get_current_block();
-            if (!block || block->write_avail() == 0)
-            {
-                buffer->add_block();
-                block = buffer->get_current_block();
-            }
-
-            bufferIndex = 0;
-            tmp = dumpoffset;
-
-            done = this->upstreamConnectRequest.print(block->end(), block->write_avail(), &bufferIndex, &tmp);
-
-            dumpoffset += bufferIndex;
-            buffer->fill(bufferIndex);
-        }
-        while (!done);
-
-        char *start = buffer->start();
-        int length = buffer->end() - start;
-
-        // Send headers.
-        int64_t w = socketManager.write(this->con.fd, start, length);
-        free_MIOBuffer(buffer);
-
-        // TODO - need to check if all data has been sent and if not send in the future?
-        // by returning SSL_HANDSHAKE_WANT_WRITE
-        //std::cout << "Write " << w << std::endl;
-
-        // treat all write failures as errors
-        // ATS will retry another 3 times to the proxy before giving up
-        if (w < 0)
-        {
-            return EVENT_ERROR;
-        }
-        else
-        {
-            sentConnect = true;
-
-            return SSL_HANDSHAKE_WANT_READ;
-        }
-    }
-    else if (!readConnectResponse)
-    {
-        if (this->upstreamConnectResponseHdrHeap == nullptr)
-        {
-            this->upstreamConnectResponseHdrHeap = new HTTPHdr;
-            this->upstreamConnectResponseHdrHeap->m_heap = new_HdrHeap();
-            this->upstreamConnectResponse.m_heap = this->upstreamConnectResponseHdrHeap->m_heap;
-            this->upstreamConnectResponse.create(HTTP_TYPE_RESPONSE);
-
-            this->initialize_handshake_buffers();
-        }
-
-        // TODO - if returns less than zero - is this an error?
-        // TODO - test with upstream proxy sending small packet sizes - use Python to create test proxy
-        this->read_raw_data();
-
-        const char *start = this->handShakeReader->start();
-        const char *end = this->handShakeReader->end();
-        HTTPParser *parser = reinterpret_cast<HTTPParser *>(ats_malloc(sizeof(HTTPParser)));
-        http_parser_init(parser);
-        ParseResult result = this->upstreamConnectResponse.parse_resp(parser, &start, end, false);
-
-        // Clean up the parser before continuing
-        http_parser_clear(parser);
-        ats_free(parser);
-
-        if (result == PARSE_RESULT_CONT)
-        {
-            return SSL_HANDSHAKE_WANT_READ;
-        }
-        else if (result == PARSE_RESULT_ERROR)
-        {
-            upstreamConnectResponseHdrHeap->m_heap->destroy();
-            delete upstreamConnectResponseHdrHeap;
-            upstreamConnectResponseHdrHeap = nullptr;
-            upstreamConnectResponse.reset();
-            this->free_handshake_buffers();
-
-            return EVENT_ERROR;
-        }
-
-        // TODO - are there other OK statuses?
-        HTTPStatus status = upstreamConnectResponse.status_get();
-
-        upstreamConnectResponseHdrHeap->m_heap->destroy();
-        delete upstreamConnectResponseHdrHeap;
-        upstreamConnectResponseHdrHeap = nullptr;
-        upstreamConnectResponse.reset();
-        this->free_handshake_buffers();
-
-        if (status != HTTP_STATUS_OK)
-        {
-            return EVENT_ERROR;
-        }
-
-        readConnectResponse = true;
-    }
-
-    handledUpsteamConnect = true;
-
-    if (!curHook)
-    {
-        curHook = ssl_hooks->get(TS_UPSTREAM_CONNECT_RESPONSE_RECEIVED_INTERNAL_HOOK);
-    }
-    else
-    {
-        curHook = curHook->next();
-    }
-    if (curHook != nullptr)
-    {
-        ContWrapper::wrap(nh->mutex.get(), curHook->m_cont, TS_EVENT_UPSTREAM_CONNECT_RESPONSE_RECEIVED, this);
-        return SSL_WAIT_FOR_HOOK;
-    }
-
-    return 0;
-}
 
 void SSLNetVConnection::prepareConnectBuffer() {
   this->connectMessageHdrHeap = new HTTPHdr;
@@ -1596,19 +1443,14 @@ SSLNetVConnection::sslServerHandShakeEvent(int &err)
 int
 SSLNetVConnection::sslClientHandShakeEvent(int &err)
 {
-    // CRTODO
-    if (!handledUpsteamConnect)
-    {
+	if (!handledUpsteamConnect) {
         int ret = handleUpstreamConnect();
-        if (ret != 0)
-        {
+		if (ret != EVENT_NONE) {
             return ret;
         }
     }
 
-
-
-    bool trace = getSSLTrace();
+  bool trace = getSSLTrace();
   ssl_error_t ssl_error;
 
   ink_assert(SSLNetVCAccess(ssl) == this);
@@ -1696,6 +1538,197 @@ SSLNetVConnection::sslClientHandShakeEvent(int &err)
   } break;
   }
   return EVENT_CONT;
+}
+
+/**
+ * Returns the upstream CONNECT request object
+ */
+HTTPHdr *SSLNetVConnection::getUpstreamConnectRequest()
+{
+	if (this->upstreamConnectRequestHdrHeap == nullptr) {
+		this->upstreamConnectRequestHdrHeap = new HTTPHdr;
+		this->upstreamConnectRequestHdrHeap->m_heap = new_HdrHeap();
+		this->upstreamConnectRequest.m_heap =
+				this->upstreamConnectRequestHdrHeap->m_heap;
+		this->upstreamConnectRequest.create(HTTP_TYPE_REQUEST);
+	}
+
+	return &upstreamConnectRequest;
+}
+
+/**
+ * If an upstream CONNECT has been set then send this to the upstream proxy and
+   read the response
+ */
+int SSLNetVConnection::handleUpstreamConnect()
+{
+	// if the CONNECT is not valid then assume that there is no upstream proxy
+	if (!this->upstreamConnectRequest.valid()) {
+		return EVENT_NONE;
+	}
+
+	if (!sentUpstreamConnect) {
+		return sendUpstreamConnect();
+	} else if (!upstreamConnectResponseRead) {
+		int ret = readUpstreamConnectResponse();
+
+		if (ret != EVENT_NONE) {
+			return ret;
+		}
+	}
+
+	handledUpsteamConnect = true;
+
+	return EVENT_NONE;
+}
+
+/**
+ * Send the CONNECT to the upstream proxy
+ 
+   Returns:
+   EVENT_ERROR for errors (upstream proxy write error)
+   SSL_HANDSHAKE_WANT_READ if completed the send and now requires the response
+ */
+int SSLNetVConnection::sendUpstreamConnect()
+{
+	MIOBuffer *buffer = new_MIOBuffer();
+
+	IOBufferBlock *block;
+	int bufferIndex;
+	int tmp, dumpoffset;
+	int done;
+
+	dumpoffset = 0;
+	do {
+		block = buffer->get_current_block();
+		if (!block || block->write_avail() == 0) {
+			buffer->add_block();
+			block = buffer->get_current_block();
+		}
+
+		bufferIndex = 0;
+		tmp = dumpoffset;
+
+		done = this->upstreamConnectRequest.print(block->start(),
+				block->write_avail(), &bufferIndex, &tmp);
+
+		dumpoffset += bufferIndex;
+		buffer->fill(bufferIndex);
+	} while (!done);
+
+	// TODO - this code does not work if the buffer has more than one block in it
+	// Probably need to add a reader as a member variable and use this to read the data
+	// e.g. IOBufferReader *reader = buffer->alloc_reader(); ... reader->consume(w); ...
+	// if (reader->read_avail()) return SSL_HANDSHAKE_WANT_WRITE (although this does not seem to trigger a write event)
+
+	char *start = buffer->start();
+	int length = buffer->end() - start;
+
+	// send the CONNECT request
+	int64_t w = socketManager.write(this->con.fd, start, length);
+
+	free_MIOBuffer(buffer);
+
+	// treat all write failures as errors
+	// Note that ATS will retry another 3 times to the proxy before giving up
+	if (w < 0) {
+		return EVENT_ERROR;
+	} else if (w != length) {
+		Error("Failed to write entire CONNECT to upstream proxy (wrote %ld)",
+				w);
+		return EVENT_ERROR;
+	} else {
+		sentUpstreamConnect = true;
+		return SSL_HANDSHAKE_WANT_READ;
+	}
+}
+
+/**
+ * Read the upstream connect response
+   Returns:
+   EVENT_ERROR for errors (upstream proxy read error or returned status code is bad)
+   SSL_HANDSHAKE_WANT_READ if more data is required
+ */
+int SSLNetVConnection::readUpstreamConnectResponse()
+{
+	if (this->upstreamConnectResponseHdrHeap == nullptr) {
+		this->upstreamConnectResponseHdrHeap = new HTTPHdr;
+		this->upstreamConnectResponseHdrHeap->m_heap = new_HdrHeap();
+		this->upstreamConnectResponse.m_heap =
+				this->upstreamConnectResponseHdrHeap->m_heap;
+		this->upstreamConnectResponse.create(HTTP_TYPE_RESPONSE);
+
+		this->initialize_handshake_buffers();
+	}
+
+	// TODO - if returns less than zero - is this an error?
+	// TODO - test with upstream proxy sending small packet sizes
+	this->read_raw_data();
+
+	const char *start = this->handShakeReader->start();
+	const char *end = this->handShakeReader->end();
+	HTTPParser *parser = reinterpret_cast<HTTPParser *>(ats_malloc(
+			sizeof(HTTPParser)));
+	http_parser_init(parser);
+	ParseResult result = this->upstreamConnectResponse.parse_resp(parser,
+			&start, end, false);
+
+	// Clean up the parser before continuing
+	http_parser_clear(parser);
+	ats_free(parser);
+
+	if (result == PARSE_RESULT_CONT) {
+		return SSL_HANDSHAKE_WANT_READ;
+	} else if (result == PARSE_RESULT_ERROR) {
+		freeUpstreamConnectResponse();
+		this->free_handshake_buffers();
+
+		return EVENT_ERROR;
+	}
+
+	// TODO - are there other OK statuses?
+	HTTPStatus status = upstreamConnectResponse.status_get();
+
+	freeUpstreamConnectResponse();
+	this->free_handshake_buffers();
+
+	if (status != HTTP_STATUS_OK) {
+		return EVENT_ERROR;
+	}
+
+	upstreamConnectResponseRead = true;
+
+	return EVENT_NONE;
+}
+
+/**
+ * Frees the upstream CONNECT request objects
+ */
+void SSLNetVConnection::freeUpstreamConnectRequest()
+{
+	if (upstreamConnectRequestHdrHeap != nullptr) {
+		upstreamConnectRequestHdrHeap->m_heap->destroy();
+		delete upstreamConnectRequestHdrHeap;
+		upstreamConnectRequestHdrHeap = nullptr;
+	}
+	if (upstreamConnectRequest.valid()) {
+		upstreamConnectRequest.reset();
+	}
+}
+
+/**
+ * Frees the upstream CONNECT response objects
+ */
+void SSLNetVConnection::freeUpstreamConnectResponse()
+{
+	if (upstreamConnectResponseHdrHeap != nullptr) {
+		upstreamConnectResponseHdrHeap->m_heap->destroy();
+		delete upstreamConnectResponseHdrHeap;
+		upstreamConnectResponseHdrHeap = nullptr;
+	}
+	if (upstreamConnectResponse.valid()) {
+		upstreamConnectResponse.reset();
+	}
 }
 
 void

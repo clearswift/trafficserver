@@ -486,9 +486,6 @@ HttpDebugNames::get_api_hook_name(TSHttpHookID t)
     return "TS_SSL_SERVERNAME_HOOK";
   case TS_CONNECT_RECEIVED_HOOK:
     return "TS_CONNECT_RECEIVED_HOOK";
-            // CRTODO
-        case TS_UPSTREAM_CONNECT_RESPONSE_RECEIVED_HOOK:
-            return "TS_UPSTREAM_CONNECT_RESPONSE_RECEIVED_HOOK";
   }
 
   return "unknown hook";

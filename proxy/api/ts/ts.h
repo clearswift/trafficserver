@@ -1491,8 +1491,6 @@ tsapi TSReturnCode TSHttpTxnParentProxyGet(TSHttpTxn txnp, const char **hostname
  */
 tsapi void TSHttpTxnParentProxySet(TSHttpTxn txnp, const char *hostname, int port);
 
-tsapi void TSHttpTxnParentOriginSet(TSHttpTxn txnp, const char *hostname, int port);
-
 tsapi TSReturnCode TSHttpTxnParentSelectionUrlGet(TSHttpTxn txnp, TSMBuffer bufp, TSMLoc obj);
 tsapi TSReturnCode TSHttpTxnParentSelectionUrlSet(TSHttpTxn txnp, TSMBuffer bufp, TSMLoc obj);
 
@@ -2457,10 +2455,9 @@ tsapi TSReturnCode TSVConnConnectGet(TSVConn vconn, TSMBuffer *bufp, TSMLoc *loc
 tsapi TSReturnCode TSVConnConnectResponseGet(TSVConn vconn, TSMBuffer *bufp, TSMLoc *loc);
 tsapi void TSVConnConnectResponseBodySet(TSVConn vconn, const char *body, int64_t length);
 
-// CRTODO
-//tsapi void TSVConnUpstreamConnectRequestSet(TSVConn vconn, const char *connectRequest, int64_t length);
-
 tsapi TSReturnCode TSVConnUpstreamConnectGet(TSVConn vconn, TSMBuffer *bufp, TSMLoc *loc);
+
+tsapi void TSHttpTxnSetParentAsOrigin(TSHttpTxn txnp);
 
 
 #ifdef __cplusplus
