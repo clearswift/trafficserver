@@ -2459,6 +2459,8 @@ tsapi TSReturnCode TSVConnUpstreamConnectGet(TSVConn vconn, TSMBuffer *bufp, TSM
 
 tsapi void TSHttpTxnSetParentAsOrigin(TSHttpTxn txnp);
 
+tsapi void *TSVConnOutgoingConnectResponseBufferSet(TSVConn vconn, TSMBuffer *buffer, TSMLoc *loc);
+tsapi void TSOutgoingConnectResponseDestroy(TSMBuffer buffer, TSMLoc loc, void *header);
 
 #ifdef __cplusplus
 }

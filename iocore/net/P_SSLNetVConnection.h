@@ -327,6 +327,8 @@ public:
 
   HTTPHdr *getUpstreamConnectRequest();
 
+  void setUpstreamConnectResponseHeadersBuffer(HdrHeapSDKHandle *buffers, HTTPHdr *headers);
+
 private:
   SSLNetVConnection(const SSLNetVConnection &);
   SSLNetVConnection &operator=(const SSLNetVConnection &);
@@ -340,7 +342,6 @@ private:
   int handleUpstreamConnect();
   int sendUpstreamConnect();
   int readUpstreamConnectResponse();
-  void freeUpstreamConnectResponse();
   void freeUpstreamConnectRequest();
 
   bool connectReceived;
@@ -386,7 +387,8 @@ private:
   HdrHeapSDKHandle *upstreamConnectRequestHdrHeap = nullptr;
   HTTPHdr upstreamConnectRequest;
   HdrHeapSDKHandle *upstreamConnectResponseHdrHeap = nullptr;
-  HTTPHdr upstreamConnectResponse;
+  HTTPHdr *upstreamConnectResponse;
+  bool upstreamConnectResponseReadStarted = false;
 
   bool sentUpstreamConnect = false;
   bool upstreamConnectResponseRead = false;

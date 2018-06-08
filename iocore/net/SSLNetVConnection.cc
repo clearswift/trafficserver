@@ -958,7 +958,7 @@ SSLNetVConnection::free(EThread *t)
     handledUpsteamConnect = false;
 
     freeUpstreamConnectRequest();
-    freeUpstreamConnectResponse();
+  upstreamConnectResponseReadStarted = false;
 
   if (from_accept_thread) {
     sslNetVCAllocator.free(this);
@@ -1652,13 +1652,14 @@ int SSLNetVConnection::sendUpstreamConnect()
 int SSLNetVConnection::readUpstreamConnectResponse()
 {
 	if (this->upstreamConnectResponseHdrHeap == nullptr) {
-		this->upstreamConnectResponseHdrHeap = new HTTPHdr;
-		this->upstreamConnectResponseHdrHeap->m_heap = new_HdrHeap();
-		this->upstreamConnectResponse.m_heap =
-				this->upstreamConnectResponseHdrHeap->m_heap;
-		this->upstreamConnectResponse.create(HTTP_TYPE_RESPONSE);
+        // This is an error!
+        return EVENT_ERROR;
+    }
 
-		this->initialize_handshake_buffers();
+    if (!this->upstreamConnectResponseReadStarted)
+    {
+        this->upstreamConnectResponseReadStarted = true;
+        this->initialize_handshake_buffers();
 	}
 
 	// TODO - if returns less than zero - is this an error?
@@ -1670,7 +1671,7 @@ int SSLNetVConnection::readUpstreamConnectResponse()
 	HTTPParser *parser = reinterpret_cast<HTTPParser *>(ats_malloc(
 			sizeof(HTTPParser)));
 	http_parser_init(parser);
-	ParseResult result = this->upstreamConnectResponse.parse_resp(parser,
+    ParseResult result = this->upstreamConnectResponse->parse_resp(parser,
 			&start, end, false);
 
 	// Clean up the parser before continuing
@@ -1680,16 +1681,14 @@ int SSLNetVConnection::readUpstreamConnectResponse()
 	if (result == PARSE_RESULT_CONT) {
 		return SSL_HANDSHAKE_WANT_READ;
 	} else if (result == PARSE_RESULT_ERROR) {
-		freeUpstreamConnectResponse();
 		this->free_handshake_buffers();
 
 		return EVENT_ERROR;
 	}
 
 	// TODO - are there other OK statuses?
-	HTTPStatus status = upstreamConnectResponse.status_get();
+    HTTPStatus status = upstreamConnectResponse->status_get();
 
-	freeUpstreamConnectResponse();
 	this->free_handshake_buffers();
 
 	if (status != HTTP_STATUS_OK) {
@@ -1716,19 +1715,10 @@ void SSLNetVConnection::freeUpstreamConnectRequest()
 	}
 }
 
-/**
- * Frees the upstream CONNECT response objects
- */
-void SSLNetVConnection::freeUpstreamConnectResponse()
+void SSLNetVConnection::setUpstreamConnectResponseHeadersBuffer(HdrHeapSDKHandle *buffer, HTTPHdr *headers)
 {
-	if (upstreamConnectResponseHdrHeap != nullptr) {
-		upstreamConnectResponseHdrHeap->m_heap->destroy();
-		delete upstreamConnectResponseHdrHeap;
-		upstreamConnectResponseHdrHeap = nullptr;
-	}
-	if (upstreamConnectResponse.valid()) {
-		upstreamConnectResponse.reset();
-	}
+  this->upstreamConnectResponseHdrHeap = buffer;
+  this->upstreamConnectResponse = headers;
 }
 
 void

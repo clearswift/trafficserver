@@ -9658,3 +9658,33 @@ void TSHttpTxnSetParentAsOrigin(TSHttpTxn txnp)
 	sm->t_state.api_info.parent_is_origin = true;
 }
 
+void *TSVConnOutgoingConnectResponseBufferSet(TSVConn vconn, TSMBuffer *buffer, TSMLoc *loc)
+{
+    sdk_assert(sdk_sanity_check_iocore_structure(vconn) == TS_SUCCESS);
+
+    *buffer = TSMBufferCreate();
+
+    sdk_assert(sdk_sanity_check_mbuffer(*buffer) == TS_SUCCESS);
+
+    NetVConnection *vc = reinterpret_cast<NetVConnection *>(vconn);
+    SSLNetVConnection *ssl_vc = dynamic_cast<SSLNetVConnection *>(vc);
+
+    HdrHeapSDKHandle * hdr = reinterpret_cast<HdrHeapSDKHandle *>(*buffer);
+
+    HTTPHdr *header = new HTTPHdr;
+    header->m_heap = hdr->m_heap;
+    header->create(HTTP_TYPE_RESPONSE);
+    *loc = reinterpret_cast<TSMLoc>(header->m_http);
+    ssl_vc->setUpstreamConnectResponseHeadersBuffer(hdr, header);
+    return header;
+}
+
+void TSOutgoingConnectResponseDestroy(TSMBuffer buffer, TSMLoc loc, void *header)
+{
+    sdk_assert(sdk_sanity_check_mbuffer(buffer) == TS_SUCCESS);
+
+    TSHandleMLocRelease(buffer, TS_NULL_MLOC, loc);
+    TSMBufferDestroy(buffer);
+    HTTPHdr *httpHeader = reinterpret_cast<HTTPHdr*>(header);
+    delete httpHeader;
+}
