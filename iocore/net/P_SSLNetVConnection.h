@@ -228,7 +228,7 @@ public:
         }
       }
       break;
-    case HANDSHAKE_HOOKS_CONNECT_RECEIVED:
+			/*case HANDSHAKE_HOOKS_CONNECT_RECEIVED:
     	if (eventId == TS_EVENT_VCONN_PRE_ACCEPT) {
     	  retval = true;
 	} else if (eventId == TS_EVENT_SSL_SERVERNAME) {
@@ -236,7 +236,7 @@ public:
 	    retval = true;
 	  }
 	}
-      break;
+			 break;*/
     case HANDSHAKE_HOOKS_SNI:
       if (eventId == TS_EVENT_VCONN_PRE_ACCEPT) {
         retval = true;
@@ -333,20 +333,41 @@ private:
 
   ts::StringView map_tls_protocol_to_tag(const char *proto_string) const;
   bool update_rbio(bool move_to_socket);
-  int handleConnect();
-  void prepareConnectBuffer();
-  void sendConnectResponse();
 
+	// Utility methods
+
+	int write_header_into_buffer(HTTPHdr *h, MIOBuffer *b);
+
+	int writeBufferToNetwork(IOBufferReader *bufferReader,
+			int64_t totalBufferSize, int64_t &totalWritten);
+
+	int writeStringToNetwork(const char *stringBuffer, int64_t stringLength,
+			int64_t &totalWritten);
+
+	int readHeadersFromNetwork(bool isRequest, HTTPHdr *headers,
+			MIOBuffer *hdrIoBuffer, IOBufferReader *headerIoBufferReader,
+			HTTPParser *httpParser);
+
+	int64_t readIntoBuffer(MIOBuffer *ioBuffer);
+
+	// Incoming CONNECT methods
+	void prepareConnectBuffer();
+	int handleConnect();
+	int detectConnect();
+	int parseIncomingConnect();
+	int sendConnectResponse();
+
+	// Upstream CONNECT methods
   int handleUpstreamConnect();
   int sendUpstreamConnect();
   int readUpstreamConnectResponse();
+	void freeUpstreamConnectRequest();
   void freeUpstreamConnectResponse();
-  void freeUpstreamConnectRequest();
 
-  bool connectReceived;
-  bool connectParseBegun;
-  bool connectParseComplete;
-  bool connectHandled;
+	// General CONNECT methods
+	void freeConnect();
+	void freeAllConnectMemory();
+
   bool sslHandShakeComplete;
   bool sslClientRenegotiationAbort;
   bool sslSessionCacheHit;
@@ -364,7 +385,7 @@ private:
   enum SSLHandshakeHookState {
     HANDSHAKE_HOOKS_PRE,
     HANDSHAKE_HOOKS_PRE_INVOKE,
-    HANDSHAKE_HOOKS_CONNECT_RECEIVED,
+		//HANDSHAKE_HOOKS_CONNECT_RECEIVED,
     HANDSHAKE_HOOKS_SNI,
     HANDSHAKE_HOOKS_CERT,
     HANDSHAKE_HOOKS_CERT_INVOKE,
@@ -376,22 +397,37 @@ private:
   SessionAccept *sessionAcceptPtr;
   bool sslTrace;
 
+	// Incoming CONNECT members
+	bool checkedForConnect = false;
+	bool connectReceived = false;
+	bool connectParseBegun = false;
+	bool connectParseComplete = false;
+	bool connectHandled = false;
+
   HdrHeapSDKHandle *connectMessageHdrHeap = nullptr;
   HTTPHdr connectMessage;
   HdrHeapSDKHandle *connectResponseHdrHeap = nullptr;
   HTTPHdr connectResponse;
   char *connectResponseBody = nullptr;
   int64_t connectResponseBodyLength = 0;
+	int64_t connectBodyWritten = 0;
+
+	// Upstream CONNECT members
+	bool sentUpstreamConnect = false;
+	bool upstreamConnectResponseRead = false;
+	bool handledUpsteamConnect = false;
 
   HdrHeapSDKHandle *upstreamConnectRequestHdrHeap = nullptr;
   HTTPHdr upstreamConnectRequest;
   HdrHeapSDKHandle *upstreamConnectResponseHdrHeap = nullptr;
   HTTPHdr upstreamConnectResponse;
 
-  bool sentUpstreamConnect = false;
-  bool upstreamConnectResponseRead = false;
-  bool handledUpsteamConnect = false;
-
+	// General CONNECT members
+	MIOBuffer *connectBuffer = nullptr;
+	IOBufferReader *connectReader = nullptr;
+	HTTPParser *connectParser = nullptr;
+	int64_t connectSize = 0;
+	int64_t connectWritten = 0;
 };
 
 typedef int (SSLNetVConnection::*SSLNetVConnHandler)(int, void *);
