@@ -299,23 +299,19 @@ public:
   /// Set by asynchronous hooks to request a specific operation.
   SslVConnOp hookOpRequested;
 
-
-
-
   bool receivedConnect();
 
-	HTTPHdr *getConnect();
+  HTTPHdr *getConnect();
 
-	HTTPHdr *getConnectResponse();
+  HTTPHdr *getConnectResponse();
 
-	void setConnectResponseBody(char *body, int64_t length);
+  void setConnectResponseBody(char *body, int64_t length);
 
-	HTTPHdr *getUpstreamConnectRequest();
+  HTTPHdr *getUpstreamConnectRequest();
 
-	void setUpstreamConnectResponseHeadersBuffer(HdrHeapSDKHandle *buffers,
-			HTTPHdr *headers);
+  void setUpstreamConnectResponseHeadersBuffer(HdrHeapSDKHandle *buffers, HTTPHdr *headers);
 
-	const char *getUpstreamConnectResponseBody(int64_t *length);
+  const char *getUpstreamConnectResponseBody(int64_t *length);
 
 private:
   SSLNetVConnection(const SSLNetVConnection &);

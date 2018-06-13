@@ -25,8 +25,7 @@
 
  ConnectHandler.h
 
- TODO
-
+ Base class for handling CONNECT requests and responses
 
  ****************************************************************************/
 
@@ -39,101 +38,124 @@
 
 class SSLNetVConnection;
 
-class ConnectHandler {
+class ConnectHandler
+{
 public:
-	ConnectHandler(SSLNetVConnection *inSslNetVConn);
+  ConnectHandler(SSLNetVConnection *inSslNetVConn);
 
-	virtual ~ConnectHandler();
+  virtual ~ConnectHandler();
 
-	HTTPHdr *getConnectRequest() {
-		return &connectRequest;
-	}
-	
-	HTTPHdr *getConnectResponse() {
-		return connectResponse;
-	}
+  HTTPHdr *getConnectRequest()
+  {
+    return &connectRequest;
+  }
 
-	void setConnectResponseBody(char *body, int64_t length) {
-		connectResponseBodyLength = length;
-		connectResponseBody = new char[connectResponseBodyLength];
-		memcpy(connectResponseBody, body, connectResponseBodyLength);
-	}
+  HTTPHdr *getConnectResponse()
+  {
+    return connectResponse;
+  }
 
-	const char *getConnectResponseBody(int64_t *length) {
-		*length = connectResponseBodyLength;
-		return connectResponseBody;
-	}
+  void setConnectResponseBody(char *body, int64_t length)
+  {
+    connectResponseBodyLength = length;
+    connectResponseBody = new char[connectResponseBodyLength];
+    memcpy(connectResponseBody, body, connectResponseBodyLength);
+  }
 
-	bool getConnectRequestParseComplete() {
-		return connectRequestParseComplete;
-	}
+  const char *getConnectResponseBody(int64_t *length)
+  {
+    *length = connectResponseBodyLength;
+    return connectResponseBody;
+  }
 
-	bool getConnectResponseParseComplete() {
-		return connectResponseParseComplete;
-	}
+  bool getConnectRequestParseComplete()
+  {
+    return connectRequestParseComplete;
+  }
 
-	bool getWorkComplete() {
-		return workComplete;
-	}
+  bool getConnectResponseParseComplete()
+  {
+    return connectResponseParseComplete;
+  }
 
-	void setConnectResponse(HdrHeapSDKHandle *buffer, HTTPHdr *headers) {
-		connectResponseHdrHeap->m_heap->destroy();
-		delete connectResponseHdrHeap;
-		delete connectResponse;
+  bool getWorkComplete()
+  {
+    return workComplete;
+  }
 
-		connectResponseHdrHeap = buffer;
-		connectResponse = headers;
+  /**
+   * Override the CONNECT response buffers
+   * The CONNECT response buffers are initially maintained internally
+   * This method allows external buffers to be used instead
+   */
+  void setConnectResponse(HdrHeapSDKHandle *buffer, HTTPHdr *headers)
+  {
+    if (ownConnectResponse) {
+      connectResponseHdrHeap->m_heap->destroy();
+      delete connectResponseHdrHeap;
+      delete connectResponse;
+    }
 
-		ownConnectResponse = false;
-	}
+    connectResponseHdrHeap = buffer;
+    connectResponse = headers;
 
-	virtual int doWork() = 0;
+    ownConnectResponse = false;
+  }
+
+  // Overridden by derived classes
+  virtual int doWork() = 0;
 
 protected:
-	int write_header_into_buffer(HTTPHdr *h, MIOBuffer *b);
+  int writeHeaderIntoBuffer(HTTPHdr *h, MIOBuffer *b);
 
-	int writeBufferToNetwork(IOBufferReader *bufferReader,
-			int64_t totalBufferSize, int64_t &totalWritten);
+  int writeBufferToNetwork(IOBufferReader *bufferReader, int64_t totalBufferSize, int64_t &totalWritten);
 
-	int writeStringToNetwork(const char *stringBuffer, int64_t stringLength,
-			int64_t &totalWritten);
+  int writeStringToNetwork(const char *stringBuffer, int64_t stringLength, int64_t &totalWritten);
 
-	int readHeadersFromNetwork(bool isRequest, HTTPHdr *headers,
-			MIOBuffer *hdrIoBuffer, IOBufferReader *headerIoBufferReader,
-			HTTPParser *httpParser);
+  int readHeadersFromNetwork(bool isRequest, HTTPHdr *headers, MIOBuffer *hdrIoBuffer,
+      IOBufferReader *headerIoBufferReader, HTTPParser *httpParser);
 
-	int64_t readIntoBuffer(MIOBuffer *ioBuffer);
+  int64_t readIntoBuffer(MIOBuffer *ioBuffer);
 
-	int readStringFromNetwork(char *stringBuffer, int64_t stringLength,
-			int64_t &totalRead);
+  int readStringFromNetwork(char *stringBuffer, int64_t stringLength, int64_t &totalRead);
 
-	void freeConnect();
+  void freeGeneral();
 
-	void freeMemory();
+  void freeMemory();
 
-	SSLNetVConnection *sslNetVConn = nullptr;
+  // pointer to the SSL NetV Connection
+  SSLNetVConnection *sslNetVConn = nullptr;
 
-	HdrHeapSDKHandle *connectRequestHdrHeap = nullptr;
-	HTTPHdr connectRequest;
-	HdrHeapSDKHandle *connectResponseHdrHeap = nullptr;
-	HTTPHdr *connectResponse = nullptr;
-	bool ownConnectResponse = true;
+  // request CONNECT buffers
+  HdrHeapSDKHandle *connectRequestHdrHeap = nullptr;
+  HTTPHdr connectRequest;
 
-	char *connectResponseBody = nullptr;
-	int64_t connectResponseBodyLength = 0;
-	int64_t connectBodyWritten = 0;
-	int64_t connectBodyRead = 0;
+  // response CONNECT buffers
+  HdrHeapSDKHandle *connectResponseHdrHeap = nullptr;
+  HTTPHdr *connectResponse = nullptr;
 
-	MIOBuffer *connectBuffer = nullptr;
-	IOBufferReader *connectReader = nullptr;
-	HTTPParser *connectParser = nullptr;
-	int64_t connectSize = 0;
-	int64_t connectWritten = 0;
+  // whether this class owns the response buffers
+  bool ownConnectResponse = true;
 
-	bool connectRequestParseComplete = false;
-	bool connectResponseParseComplete = false;
+  // body buffer and related variables
+  char *connectResponseBody = nullptr;
+  int64_t connectResponseBodyLength = 0;
+  int64_t connectBodyWritten = 0;
+  int64_t connectBodyRead = 0;
 
-	bool workComplete = false;
+  // general use buffer, reader and parser
+  MIOBuffer *connectBuffer = nullptr;
+  IOBufferReader *connectReader = nullptr;
+  HTTPParser *connectParser = nullptr;
+  int64_t connectSize = 0;
+  int64_t connectWritten = 0;
+
+  // whether parsing is complete
+  bool connectRequestParseComplete = false;
+  bool connectResponseParseComplete = false;
+
+  // whether the CONNECT handling is complete
+  bool workComplete = false;
 };
 
 #endif /* _ConnectHandler_h_ */

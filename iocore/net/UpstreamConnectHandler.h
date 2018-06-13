@@ -25,8 +25,10 @@
 
  UpstreamConnectHander.h
 
- TODO
+ If an upstream CONNECT request has been set then it writes the request to
+ the network and reads the response which could include a body
 
+ Note that chunked encoded bodies are not supported
 
  ****************************************************************************/
 
@@ -35,23 +37,25 @@
 
 #include "ConnectHandler.h"
 
-class UpstreamConnectHander: public ConnectHandler {
+class UpstreamConnectHander: public ConnectHandler
+{
 public:
-	UpstreamConnectHander(SSLNetVConnection *inSslNetVConn);
+  UpstreamConnectHander(SSLNetVConnection *inSslNetVConn);
 
-	int doWork() override;
+  int doWork() override;
 
 private:
-	int sendUpstreamConnect();
-	int readUpstreamConnectResponse();
-	int readUpstreamConnectResponseBody();
+  int sendUpstreamConnect();
+  int readUpstreamConnectResponse();
+  int readUpstreamConnectResponseBody();
+  void drainConnectReaderIntoBody();
 
-	bool checkedForValidConnect = false;
-	bool sentUpstreamConnect = false;
-	bool upstreamConnectResponseRead = false;
-	bool upstreamBodyRead = false;
+  bool checkedForValidConnect = false;
+  bool sentUpstreamConnect = false;
+  bool upstreamConnectResponseRead = false;
+  bool upstreamBodyRead = false;
 
-	HTTPStatus responseStatus = HTTP_STATUS_NONE;
+  HTTPStatus responseStatus = HTTP_STATUS_NONE;
 };
 
 #endif /* _UpstreamConnectHandler_h_ */

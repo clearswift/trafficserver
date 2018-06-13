@@ -868,11 +868,6 @@ SSLNetVConnection::do_io_close(int lerrno)
 void
 SSLNetVConnection::free(EThread *t)
 {
-	// CRTODO
-	Debug("upstream_connect_handler", "%p FREE", this);
-
-
-
   got_remote_addr = false;
   got_local_addr  = false;
   read.vio.mutex.clear();
@@ -925,10 +920,10 @@ SSLNetVConnection::free(EThread *t)
   free_handshake_buffers();
   sslTrace = false;
 
-	if (connectHandler) {
-		delete connectHandler;
-		connectHandler = nullptr;
-	}
+  if (connectHandler) {
+    delete connectHandler;
+    connectHandler = nullptr;
+  }
 
   if (from_accept_thread) {
     sslNetVCAllocator.free(this);
@@ -1064,19 +1059,19 @@ SSLNetVConnection::sslStartHandShake(int event, int &err)
 int
 SSLNetVConnection::sslServerHandShakeEvent(int &err)
 {
-	if (connectHandler == nullptr) {
-		connectHandler = new IncomingConnectHandler(this);
-	}
+  if (connectHandler == nullptr) {
+    connectHandler = new IncomingConnectHandler(this);
+  }
 
-	if (!connectHandler->getWorkComplete()) {
-		int ret = connectHandler->doWork();
-		if (ret != EVENT_NONE) {
-			if (ret == EVENT_ERROR) {
-				err = ENET_CONNECT_FAILED;
-			}
-			return ret;
-		}
-	}
+  if (!connectHandler->getWorkComplete()) {
+    int ret = connectHandler->doWork();
+    if (ret != EVENT_NONE) {
+      if (ret == EVENT_ERROR) {
+        err = ENET_CONNECT_FAILED;
+      }
+      return ret;
+    }
+  }
 
 	// Continue on if we are in the invoked state.  The hook has not yet reenabled
   if (sslHandshakeHookState == HANDSHAKE_HOOKS_CERT_INVOKE || sslHandshakeHookState == HANDSHAKE_HOOKS_PRE_INVOKE) {
@@ -1299,19 +1294,19 @@ SSLNetVConnection::sslServerHandShakeEvent(int &err)
 int
 SSLNetVConnection::sslClientHandShakeEvent(int &err)
 {
-	if (connectHandler == nullptr) {
-		connectHandler = new UpstreamConnectHander(this);
-	}
+  if (connectHandler == nullptr) {
+    connectHandler = new UpstreamConnectHander(this);
+  }
 
-	if (!connectHandler->getWorkComplete()) {
-		int ret = connectHandler->doWork();
-		if (ret != EVENT_NONE) {
-			if (ret == EVENT_ERROR) {
-				err = ENET_CONNECT_FAILED;
-			}
-            return ret;
-        }
+  if (!connectHandler->getWorkComplete()) {
+    int ret = connectHandler->doWork();
+    if (ret != EVENT_NONE) {
+      if (ret == EVENT_ERROR) {
+        err = ENET_CONNECT_FAILED;
+      }
+      return ret;
     }
+  }
 
   bool trace = getSSLTrace();
   ssl_error_t ssl_error;
@@ -1729,39 +1724,43 @@ SSLNetVConnection::protocol_contains(ts::StringView prefix) const
   return retval;
 }
 
-bool SSLNetVConnection::receivedConnect() {
-	// CONNECT has been received and is complete
-	// (but might not have been fully handled yet).
-	return connectHandler->getConnectRequestParseComplete();
+bool SSLNetVConnection::receivedConnect()
+{
+  // CONNECT has been received and is complete
+  // (but might not have been fully handled yet).
+  return connectHandler->getConnectRequestParseComplete();
 }
 
-HTTPHdr *SSLNetVConnection::getConnect() {
-	return connectHandler->getConnectRequest();
+HTTPHdr *SSLNetVConnection::getConnect()
+{
+  return connectHandler->getConnectRequest();
 }
 
-HTTPHdr *SSLNetVConnection::getConnectResponse() {
-	return connectHandler->getConnectResponse();
+HTTPHdr *SSLNetVConnection::getConnectResponse()
+{
+  return connectHandler->getConnectResponse();
 }
 
-void SSLNetVConnection::setConnectResponseBody(char *body, int64_t length) {
-	connectHandler->setConnectResponseBody(body, length);
+void SSLNetVConnection::setConnectResponseBody(char *body, int64_t length)
+{
+  connectHandler->setConnectResponseBody(body, length);
 }
 
-HTTPHdr *SSLNetVConnection::getUpstreamConnectRequest() {
-	if (connectHandler == nullptr) {
-		connectHandler = new UpstreamConnectHander(this);
-	}
+HTTPHdr *SSLNetVConnection::getUpstreamConnectRequest()
+{
+  if (connectHandler == nullptr) {
+    connectHandler = new UpstreamConnectHander(this);
+  }
 
-	return connectHandler->getConnectRequest();
+  return connectHandler->getConnectRequest();
 }
 
-void SSLNetVConnection::setUpstreamConnectResponseHeadersBuffer(
-		HdrHeapSDKHandle *buffer, HTTPHdr *headers) {
-	Debug("upstream_connect_handler", "%p SET BUFFERS", this);
-
-	connectHandler->setConnectResponse(buffer, headers);
+void SSLNetVConnection::setUpstreamConnectResponseHeadersBuffer(HdrHeapSDKHandle *buffer, HTTPHdr *headers)
+{
+  connectHandler->setConnectResponse(buffer, headers);
 }
 
-const char *SSLNetVConnection::getUpstreamConnectResponseBody(int64_t *length) {
-	return connectHandler->getConnectResponseBody(length);
+const char *SSLNetVConnection::getUpstreamConnectResponseBody(int64_t *length)
+{
+  return connectHandler->getConnectResponseBody(length);
 }

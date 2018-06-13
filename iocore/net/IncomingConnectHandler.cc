@@ -28,136 +28,168 @@
 #include "InkAPIInternal.h"
 
 IncomingConnectHandler::IncomingConnectHandler(SSLNetVConnection *inSslNetVConn) :
-		ConnectHandler(inSslNetVConn) {
-	connectBuffer = new_MIOBuffer();
-	connectReader = connectBuffer->alloc_reader();
+    ConnectHandler(inSslNetVConn)
+{
+  connectBuffer = new_MIOBuffer();
+  connectReader = connectBuffer->alloc_reader();
 
-	connectParser = reinterpret_cast<HTTPParser *>(ats_malloc(
-			sizeof(HTTPParser)));
-	http_parser_init(connectParser);
+  connectParser = reinterpret_cast<HTTPParser *>(ats_malloc(sizeof(HTTPParser)));
+  http_parser_init(connectParser);
 }
 
-int IncomingConnectHandler::doWork() {
-	int ret = EVENT_NONE;
+/**
+ * Detects whether connection is raw SSL or a CONNECT
+ * Reads the CONNECT and sends back the response
+ *
+ * Returns:
+ * EVENT_NONE - Operation is complete
+ * Any other return will be used by the SSLNetVConnection
+ */
+int IncomingConnectHandler::doWork()
+{
+  int ret = EVENT_NONE;
 
-	if (!this->checkedForConnect) {
-		ret = detectConnect();
+  // if not checked for a CONNECT request
+  if (!this->checkedForConnect) {
+    ret = detectConnect();
 
-		if (ret != EVENT_NONE) {
-			return ret;
-		}
-		// if the CONNECT detection is complete and it is not a CONNECT
-		else if (this->checkedForConnect && !this->connectReceived) {
-			return EVENT_NONE;
-		}
-	}
+    if (ret != EVENT_NONE) {
+      return ret;
+    }
+    // if the CONNECT detection is complete and it is not a CONNECT
+    else if (this->checkedForConnect && !this->connectReceived) {
+      return EVENT_NONE;
+    }
+  }
 
-	if (!this->connectRequestParseComplete) {
-		ret = parseIncomingConnect();
-	}
+  if (!this->connectRequestParseComplete) {
+    ret = parseIncomingConnect();
+  }
 
-	if (ret == EVENT_NONE && this->connectRequestParseComplete) {
-		ret = sendConnectResponse();
-	}
+  if (ret == EVENT_NONE && this->connectRequestParseComplete) {
+    ret = sendConnectResponse();
+  }
 
-	return ret;
+  return ret;
 }
 
-int IncomingConnectHandler::detectConnect() {
-	int ret = EVENT_NONE;
+/**
+ * Detects whether the incoming connections is raw SSL or a CONNECT
+ *
+ * Returns:
+ * EVENT_NONE - Detection complete
+ * SSL_HANDSHAKE_WANT_READ - More data required for detection
+ * EVENT_ERROR - Error occurred
+ */
+int IncomingConnectHandler::detectConnect()
+{
+  int ret = EVENT_NONE;
 
-	char rawBuffer[1];
+  char rawBuffer[1];
 
-	int r = recv(sslNetVConn->con.fd, rawBuffer, 1, MSG_PEEK);
+  int r = recv(sslNetVConn->con.fd, rawBuffer, 1, MSG_PEEK);
 
-	if (r <= 0) {
-		if (r == 0 || r == -EAGAIN || r == -ENOTCONN) {
-			ret = SSL_HANDSHAKE_WANT_READ;
-		} else {
-			ret = EVENT_ERROR;
-		}
-	} else {
-		this->checkedForConnect = true;
+  if (r <= 0) {
+    if (r == 0 || r == -EAGAIN || r == -ENOTCONN) {
+      ret = SSL_HANDSHAKE_WANT_READ;
+    } else {
+      ret = EVENT_ERROR;
+    }
+  } else {
+    this->checkedForConnect = true;
 
-		// if raw SSL has been detected
-		if (rawBuffer[0] == SSL_OP_HANDSHAKE) {
-			Debug("incoming_connect_handler", "Raw SSL detected");
-			this->workComplete = true;
-		} else {
-			Debug("incoming_connect_handler", "CONNECT detected");
-			this->connectReceived = true;
-		}
-	}
+    // if raw SSL has been detected
+    if (rawBuffer[0] == SSL_OP_HANDSHAKE) {
+      Debug("incoming_connect_handler", "Raw SSL detected");
+      this->workComplete = true;
+    } else {
+      Debug("incoming_connect_handler", "CONNECT detected");
+      this->connectReceived = true;
+    }
+  }
 
-	return ret;
+  return ret;
 }
 
-int IncomingConnectHandler::parseIncomingConnect() {
-	int ret = EVENT_NONE;
+/**
+ * Reads and parses the incoming CONNECT request
+ * Also invokes the TS_EVENT_CONNECT_RECEIVED event
+ *
+ * Returns:
+ * EVENT_NONE - Parsing is complete
+ * SSL_HANDSHAKE_WANT_READ - More data required
+ * EVENT_ERROR - Error occurred
+ */
+int IncomingConnectHandler::parseIncomingConnect()
+{
+  int ret = EVENT_NONE;
 
-	if (!this->connectRequestParseComplete) {
-		ret = readHeadersFromNetwork(true, &connectRequest, connectBuffer,
-				connectReader, connectParser);
+  if (!this->connectRequestParseComplete) {
+    ret = readHeadersFromNetwork(true, &connectRequest, connectBuffer, connectReader, connectParser);
 
-		if (ret == EVENT_NONE) {
-			this->connectRequestParseComplete = true;
+    if (ret == EVENT_NONE) {
+      this->connectRequestParseComplete = true;
 
-			freeConnect();
+      freeGeneral();
 
-			APIHook *hook = ssl_hooks->get(TS_CONNECT_RECEIVED_INTERNAL_HOOK);
+      APIHook *hook = ssl_hooks->get(TS_CONNECT_RECEIVED_INTERNAL_HOOK);
 
-			if (hook != nullptr) {
-				hook->invoke(TS_EVENT_CONNECT_RECEIVED, sslNetVConn);
-			}
-		}
-	}
+      if (hook != nullptr) {
+        hook->invoke(TS_EVENT_CONNECT_RECEIVED, sslNetVConn);
+      }
+    }
+  }
 
-	return ret;
+  return ret;
 }
 
-int IncomingConnectHandler::sendConnectResponse() {
-	if (connectBuffer == nullptr) {
-		connectBuffer = new_MIOBuffer();
-		connectReader = connectBuffer->alloc_reader();
+/**
+ * Sends the CONNECT response
+ *
+ * Returns:
+ * EVENT_NONE - Response has been sent
+ * VC_EVENT_WRITE_READY - The response has not been fully sent
+ * EVENT_ERROR - Error occurred
+ */
+int IncomingConnectHandler::sendConnectResponse()
+{
+  if (connectBuffer == nullptr) {
+    connectBuffer = new_MIOBuffer();
+    connectReader = connectBuffer->alloc_reader();
 
-		int reasonLength;
-		this->connectResponse->reason_get(&reasonLength);
-		if (reasonLength == 0) {
-			// No reason set, default to reason for status
-			const char* reason = http_hdr_reason_lookup(
-					this->connectResponse->status_get());
-			this->connectResponse->reason_set(reason,
-					static_cast<int>(strlen(reason)));
-		}
+    int reasonLength;
+    this->connectResponse->reason_get(&reasonLength);
+    if (reasonLength == 0) {
+      // No reason set, default to reason for status
+      const char* reason = http_hdr_reason_lookup(this->connectResponse->status_get());
+      this->connectResponse->reason_set(reason, static_cast<int>(strlen(reason)));
+    }
 
-		if (this->connectResponseBodyLength > 0) {
-			this->connectResponse->set_content_length(
-					this->connectResponseBodyLength);
-		}
+    if (this->connectResponseBodyLength > 0) {
+      this->connectResponse->set_content_length(this->connectResponseBodyLength);
+    }
 
-		connectSize = write_header_into_buffer(connectResponse, connectBuffer);
-	}
+    connectSize = writeHeaderIntoBuffer(connectResponse, connectBuffer);
+  }
 
-	int ret = EVENT_NONE;
+  int ret = EVENT_NONE;
 
-	// if the whole CONNECT response has not been written
-	if (connectWritten != connectSize) {
-		ret = writeBufferToNetwork(connectReader, connectSize, connectWritten);
-	}
+  // if the whole CONNECT response has not been written
+  if (connectWritten != connectSize) {
+    ret = writeBufferToNetwork(connectReader, connectSize, connectWritten);
+  }
 
-	if (ret == EVENT_NONE) {
-		// if there is a CONNECT response body and it has not been fully written
-		if (this->connectResponseBodyLength > 0
-				&& connectResponseBodyLength != connectBodyWritten) {
-			ret = writeStringToNetwork(this->connectResponseBody,
-					this->connectResponseBodyLength, this->connectBodyWritten);
-		}
+  if (ret == EVENT_NONE) {
+    // if there is a CONNECT response body and it has not been fully written
+    if (this->connectResponseBodyLength > 0 && connectResponseBodyLength != connectBodyWritten) {
+      ret = writeStringToNetwork(this->connectResponseBody, this->connectResponseBodyLength, this->connectBodyWritten);
+    }
 
-		if (ret == EVENT_NONE) {
-			this->workComplete = true;
-			Debug("incoming_connect_handler", "CONNECT processed");
-		}
-	}
+    if (ret == EVENT_NONE) {
+      this->workComplete = true;
+      Debug("incoming_connect_handler", "CONNECT processed");
+    }
+  }
 
-	return ret;
+  return ret;
 }
