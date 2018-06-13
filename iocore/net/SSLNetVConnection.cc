@@ -31,6 +31,8 @@
 #include "BIO_fastopen.h"
 #include "Log.h"
 #include "P_SSLClientUtils.h"
+#include "IncomingConnectHandler.h"
+#include "UpstreamConnectHandler.h"
 
 #include <climits>
 #include <string>
@@ -866,6 +868,11 @@ SSLNetVConnection::do_io_close(int lerrno)
 void
 SSLNetVConnection::free(EThread *t)
 {
+	// CRTODO
+	Debug("upstream_connect_handler", "%p FREE", this);
+
+
+
   got_remote_addr = false;
   got_local_addr  = false;
   read.vio.mutex.clear();
@@ -918,7 +925,10 @@ SSLNetVConnection::free(EThread *t)
   free_handshake_buffers();
   sslTrace = false;
 
-	freeAllConnectMemory();
+	if (connectHandler) {
+		delete connectHandler;
+		connectHandler = nullptr;
+	}
 
   if (from_accept_thread) {
     sslNetVCAllocator.free(this);
@@ -1054,8 +1064,12 @@ SSLNetVConnection::sslStartHandShake(int event, int &err)
 int
 SSLNetVConnection::sslServerHandShakeEvent(int &err)
 {
-	if (!connectHandled) {
-		int ret = handleConnect();
+	if (connectHandler == nullptr) {
+		connectHandler = new IncomingConnectHandler(this);
+	}
+
+	if (!connectHandler->getWorkComplete()) {
+		int ret = connectHandler->doWork();
 		if (ret != EVENT_NONE) {
 			if (ret == EVENT_ERROR) {
 				err = ENET_CONNECT_FAILED;
@@ -1285,8 +1299,12 @@ SSLNetVConnection::sslServerHandShakeEvent(int &err)
 int
 SSLNetVConnection::sslClientHandShakeEvent(int &err)
 {
-	if (!handledUpsteamConnect) {
-        int ret = handleUpstreamConnect();
+	if (connectHandler == nullptr) {
+		connectHandler = new UpstreamConnectHander(this);
+	}
+
+	if (!connectHandler->getWorkComplete()) {
+		int ret = connectHandler->doWork();
 		if (ret != EVENT_NONE) {
 			if (ret == EVENT_ERROR) {
 				err = ENET_CONNECT_FAILED;
@@ -1711,518 +1729,39 @@ SSLNetVConnection::protocol_contains(ts::StringView prefix) const
   return retval;
 }
 
-// Utility methods
-
-int SSLNetVConnection::write_header_into_buffer(HTTPHdr *h, MIOBuffer *b) {
-	int bufindex;
-	int dumpoffset;
-	int done, tmp;
-	IOBufferBlock *block;
-
-	dumpoffset = 0;
-	do {
-		bufindex = 0;
-		tmp = dumpoffset;
-		block = b->get_current_block();
-		ink_assert(block->write_avail() > 0);
-		done = h->print(block->start(), block->write_avail(), &bufindex, &tmp);
-		dumpoffset += bufindex;
-		ink_assert(bufindex > 0);
-		b->fill(bufindex);
-		if (!done) {
-			b->add_block();
-		}
-	} while (!done);
-
-	return dumpoffset;
+bool SSLNetVConnection::receivedConnect() {
+	// CONNECT has been received and is complete
+	// (but might not have been fully handled yet).
+	return connectHandler->getConnectRequestParseComplete();
 }
 
-int SSLNetVConnection::writeBufferToNetwork(IOBufferReader *bufferReader,
-		int64_t totalBufferSize, int64_t &totalWritten) {
-	MIOBufferAccessor accessor;
-	accessor.reader_for(bufferReader);
-
-	int needs = 0;
-	int64_t written = 0;
-	int64_t toWrite = 4096;
-	if (totalBufferSize - totalWritten < 4096) {
-		toWrite = totalBufferSize - totalWritten;
-	}
-
-	int64_t w = UnixNetVConnection::load_buffer_and_write(toWrite, accessor,
-			written, needs);
-
-	// TODO
-	//std::cout << "buffer written " << w << std::endl;
-
-	int ret = EVENT_NONE;
-
-	if (w < 0) {
-		ret = EVENT_ERROR;
-	} else {
-		totalWritten += written;
-
-		if (totalWritten != totalBufferSize) {
-			// cannot use SSL_HANDSHAKE_WANT_WRITE as this vconn would be removed from the write checks
-			ret = VC_EVENT_WRITE_READY;
-		}
-	}
-
-	return ret;
+HTTPHdr *SSLNetVConnection::getConnect() {
+	return connectHandler->getConnectRequest();
 }
 
-int SSLNetVConnection::writeStringToNetwork(const char *stringBuffer,
-		int64_t stringLength, int64_t &totalWritten) {
-	int64_t toWrite = 4096;
-	if (stringLength - totalWritten < 4096) {
-		toWrite = stringLength - totalWritten;
-	}
-
-	int64_t w = socketManager.write(this->con.fd,
-			(void*) (stringBuffer + totalWritten), toWrite);
-
-	// TODO
-	//std::cout << "string written " << w << std::endl;
-
-	int ret = EVENT_NONE;
-
-	if (w < 0) {
-		ret = EVENT_ERROR;
-	} else {
-		totalWritten += w;
-
-		if (totalWritten != stringLength) {
-			// cannot use SSL_HANDSHAKE_WANT_WRITE as this vconn would be removed from the write checks
-			ret = VC_EVENT_WRITE_READY;
-		}
-	}
-
-	return ret;
+HTTPHdr *SSLNetVConnection::getConnectResponse() {
+	return connectHandler->getConnectResponse();
 }
 
-int SSLNetVConnection::readHeadersFromNetwork(bool isRequest, HTTPHdr *headers,
-		MIOBuffer *hdrIoBuffer, IOBufferReader *headerIoBufferReader,
-		HTTPParser *httpParser) {
-	int ret = EVENT_NONE;
-
-	int totalRead = readIntoBuffer(hdrIoBuffer);
-
-	if (totalRead < 0) {
-		ret = EVENT_ERROR;
-	}
-	// this happens once each time SSL_HANDSHAKE_WANT_READ is returned in the parsing code below
-	else if (totalRead == 0) {
-		ret = SSL_HANDSHAKE_WANT_READ;
-	} else {
-		int bytesUsed = 0;
-		ParseResult result = PARSE_RESULT_ERROR;
-
-		if (isRequest) {
-			result = headers->parse_req(httpParser, headerIoBufferReader,
-					&bytesUsed, false);
-		} else {
-			result = headers->parse_resp(httpParser, headerIoBufferReader,
-					&bytesUsed, false);
-		}
-
-		if (result == PARSE_RESULT_CONT) {
-			// for some reason returning this causes a single read event to be scheduled immediately
-			ret = SSL_HANDSHAKE_WANT_READ;
-		} else if (result == PARSE_RESULT_ERROR) {
-			ret = EVENT_ERROR;
-		}
-	}
-
-	return ret;
+void SSLNetVConnection::setConnectResponseBody(char *body, int64_t length) {
+	connectHandler->setConnectResponseBody(body, length);
 }
 
-int64_t SSLNetVConnection::readIntoBuffer(MIOBuffer *ioBuffer) {
-	int64_t totalRead = 0;
-	int64_t read = 0;
-	int64_t bufLength = 0;
-
-	do {
-		IOBufferBlock *b = ioBuffer->get_current_block();
-		bufLength = b->write_avail();
-		char *buffer = b->_end;
-
-		read = socketManager.read(this->con.fd, buffer, bufLength);
-
-		//std::cout << "read " << read << std::endl;
-
-		if (read > 0) {
-			totalRead += read;
-
-			ioBuffer->fill(read);
-			ioBuffer->add_block();
-		}
-	} while (read > 0);
-
-	if (read < 0) {
-		if (read != -EAGAIN && read != -ENOTCONN) {
-			totalRead = -1;
-		}
-	}
-
-	//std::cout << "total read " << totalRead << std::endl;
-
-	return totalRead;
-}
-
-// End of utility methods
-
-// Incoming CONNECT methods
-
-void SSLNetVConnection::prepareConnectBuffer() {
-	this->connectMessageHdrHeap = new HTTPHdr;
-	this->connectMessageHdrHeap->m_heap = new_HdrHeap();
-	this->connectMessage.m_heap = this->connectMessageHdrHeap->m_heap;
-	this->connectMessage.create(HTTP_TYPE_REQUEST);
-	this->connectParseBegun = true;
-
-	// Prepare the response.
-	this->connectResponseHdrHeap = new HTTPHdr;
-	this->connectResponseHdrHeap->m_heap = new_HdrHeap();
-	this->connectResponse.m_heap = this->connectResponseHdrHeap->m_heap;
-	this->connectResponse.create(HTTP_TYPE_RESPONSE);
-	this->connectResponse.status_set(HTTP_STATUS_OK);
-}
-
-int SSLNetVConnection::handleConnect() {
-	int ret = EVENT_NONE;
-
-	if (!this->checkedForConnect) {
-		ret = detectConnect();
-
-		if (ret != EVENT_NONE) {
-			return ret;
-		}
-		// if the CONNECT detection is complete and it is not a CONNECT
-		else if (this->checkedForConnect && !this->connectReceived) {
-			return EVENT_NONE;
-		}
-	}
-
-	if (!this->connectParseComplete) {
-		ret = parseIncomingConnect();
-	}
-
-	if (ret == EVENT_NONE && this->connectParseComplete) {
-		ret = sendConnectResponse();
-	}
-
-	return ret;
-}
-
-int SSLNetVConnection::detectConnect() {
-	int ret = EVENT_NONE;
-
-	char rawBuffer[1];
-
-	int r = recv(this->con.fd, rawBuffer, 1, MSG_PEEK);
-
-	if (r <= 0) {
-		if (r == 0 || r == -EAGAIN || r == -ENOTCONN) {
-			ret = SSL_HANDSHAKE_WANT_READ;
-		} else {
-			ret = EVENT_ERROR;
-		}
-	} else {
-		this->checkedForConnect = true;
-
-		// if raw SSL has been detected
-		if (rawBuffer[0] == SSL_OP_HANDSHAKE) {
-			this->connectHandled = true;
-		} else {
-			this->connectReceived = true;
-		}
-	}
-
-	return ret;
-}
-
-int SSLNetVConnection::parseIncomingConnect() {
-	int ret = EVENT_NONE;
-
-	if (!this->connectParseBegun) {
-		prepareConnectBuffer();
-
-		connectBuffer = new_MIOBuffer();
-		connectReader = connectBuffer->alloc_reader();
-
-		connectParser = reinterpret_cast<HTTPParser *>(ats_malloc(
-				sizeof(HTTPParser)));
-		http_parser_init(connectParser);
-	}
-
-	if (!this->connectParseComplete) {
-		ret = readHeadersFromNetwork(true, &connectMessage, connectBuffer,
-				connectReader, connectParser);
-
-		if (ret == EVENT_NONE) {
-			this->connectParseComplete = true;
-
-			freeConnect();
-
-			curHook = ssl_hooks->get(TS_CONNECT_RECEIVED_INTERNAL_HOOK);
-
-			if (curHook != nullptr) {
-				curHook->invoke(TS_EVENT_CONNECT_RECEIVED, this);
-			}
-		}
-	}
-
-	return ret;
-}
-
-int SSLNetVConnection::sendConnectResponse() {
-	if (connectBuffer == nullptr) {
-		connectBuffer = new_MIOBuffer();
-		connectReader = connectBuffer->alloc_reader();
-
-		int reasonLength;
-		this->connectResponse.reason_get(&reasonLength);
-		if (reasonLength == 0) {
-			// No reason set, default to reason for status
-			const char* reason = http_hdr_reason_lookup(
-					this->connectResponse.status_get());
-			this->connectResponse.reason_set(reason,
-					static_cast<int>(strlen(reason)));
-		}
-
-		if (this->connectResponseBodyLength > 0) {
-			this->connectResponse.set_content_length(
-					this->connectResponseBodyLength);
-		}
-
-		connectSize = write_header_into_buffer(&this->connectResponse,
-				connectBuffer);
-	}
-
-	int ret = EVENT_NONE;
-
-	// if the whole CONNECT response has not been written
-	if (connectWritten != connectSize) {
-		ret = writeBufferToNetwork(connectReader, connectSize, connectWritten);
-	}
-
-	if (ret == EVENT_NONE) {
-		// if there is a CONNECT response body and it has not been fully written
-		if (this->connectResponseBodyLength > 0
-				&& connectResponseBodyLength != connectBodyWritten) {
-			ret = writeStringToNetwork(this->connectResponseBody,
-					this->connectResponseBodyLength, this->connectBodyWritten);
-		}
-
-		if (ret == EVENT_NONE) {
-			this->connectHandled = true;
-			Debug("ssl.handshake", "Connect processed.");
-		}
-	}
-
-	return ret;
-}
-
-// End of incoming CONNECT methods
-
-// Upstream CONNECT methods
-
-/**
- * Returns the upstream CONNECT request object
- */
 HTTPHdr *SSLNetVConnection::getUpstreamConnectRequest() {
-	if (this->upstreamConnectRequestHdrHeap == nullptr) {
-		this->upstreamConnectRequestHdrHeap = new HTTPHdr;
-		this->upstreamConnectRequestHdrHeap->m_heap = new_HdrHeap();
-		this->upstreamConnectRequest.m_heap =
-				this->upstreamConnectRequestHdrHeap->m_heap;
-		this->upstreamConnectRequest.create(HTTP_TYPE_REQUEST);
+	if (connectHandler == nullptr) {
+		connectHandler = new UpstreamConnectHander(this);
 	}
 
-	return &upstreamConnectRequest;
+	return connectHandler->getConnectRequest();
 }
 
-/**
- * If an upstream CONNECT has been set then send this to the upstream proxy and
- read the response
- */
-int SSLNetVConnection::handleUpstreamConnect() {
-	// if the CONNECT is not valid then assume that there is no upstream proxy
-	if (!this->upstreamConnectRequest.valid()) {
-		handledUpsteamConnect = true;
-		return EVENT_NONE;
-	}
+void SSLNetVConnection::setUpstreamConnectResponseHeadersBuffer(
+		HdrHeapSDKHandle *buffer, HTTPHdr *headers) {
+	Debug("upstream_connect_handler", "%p SET BUFFERS", this);
 
-	if (!sentUpstreamConnect) {
-		return sendUpstreamConnect();
-	} else if (!upstreamConnectResponseRead) {
-		int ret = readUpstreamConnectResponse();
-
-		if (ret != EVENT_NONE) {
-			return ret;
-		}
-	}
-
-	handledUpsteamConnect = true;
-
-	return EVENT_NONE;
+	connectHandler->setConnectResponse(buffer, headers);
 }
 
-/**
- * Send the CONNECT to the upstream proxy
-
- Returns:
- EVENT_ERROR for errors (upstream proxy write error)
- SSL_HANDSHAKE_WANT_READ if completed the send and now requires the response
- */
-int SSLNetVConnection::sendUpstreamConnect() {
-	if (connectBuffer == nullptr) {
-		connectBuffer = new_MIOBuffer();
-		connectReader = connectBuffer->alloc_reader();
-
-		connectSize = write_header_into_buffer(&this->upstreamConnectRequest,
-				connectBuffer);
-	}
-
-	int ret = writeBufferToNetwork(connectReader, connectSize, connectWritten);
-
-	if (ret == EVENT_NONE) {
-		freeConnect();
-
-		sentUpstreamConnect = true;
-		ret = SSL_HANDSHAKE_WANT_READ;
-	}
-
-	return ret;
+const char *SSLNetVConnection::getUpstreamConnectResponseBody(int64_t *length) {
+	return connectHandler->getConnectResponseBody(length);
 }
-
-/**
- * Read the upstream connect response
- Returns:
- EVENT_ERROR for errors (upstream proxy read error or returned status code is bad)
- SSL_HANDSHAKE_WANT_READ if more data is required
- */
-int SSLNetVConnection::readUpstreamConnectResponse() {
-	int ret = EVENT_NONE;
-
-	if (this->upstreamConnectResponseHdrHeap == nullptr) {
-		this->upstreamConnectResponseHdrHeap = new HTTPHdr;
-		this->upstreamConnectResponseHdrHeap->m_heap = new_HdrHeap();
-		this->upstreamConnectResponse.m_heap =
-				this->upstreamConnectResponseHdrHeap->m_heap;
-		this->upstreamConnectResponse.create(HTTP_TYPE_RESPONSE);
-
-		connectBuffer = new_MIOBuffer();
-		connectReader = connectBuffer->alloc_reader();
-
-		connectParser = reinterpret_cast<HTTPParser *>(ats_malloc(
-				sizeof(HTTPParser)));
-		http_parser_init(connectParser);
-	}
-
-	ret = readHeadersFromNetwork(false, &upstreamConnectResponse, connectBuffer,
-			connectReader, connectParser);
-
-	if (ret == EVENT_NONE) {
-		HTTPStatus status = upstreamConnectResponse.status_get();
-
-		if (status != HTTP_STATUS_OK) {
-			ret = EVENT_ERROR;
-		} else {
-			// only set this to true if no error occurred otherwise the SSL client handshake will be sent to the
-			// upstream proxy just before the connection is about to be closed
-			upstreamConnectResponseRead = true;
-		}
-	}
-
-	return ret;
-}
-
-/**
- * Frees the upstream CONNECT request objects
- */
-void SSLNetVConnection::freeUpstreamConnectRequest() {
-	if (upstreamConnectRequestHdrHeap != nullptr) {
-		upstreamConnectRequestHdrHeap->m_heap->destroy();
-		delete upstreamConnectRequestHdrHeap;
-		upstreamConnectRequestHdrHeap = nullptr;
-	}
-	if (upstreamConnectRequest.valid()) {
-		upstreamConnectRequest.reset();
-	}
-}
-
-/**
- * Frees the upstream CONNECT response objects
- */
-void SSLNetVConnection::freeUpstreamConnectResponse() {
-	if (upstreamConnectResponseHdrHeap != nullptr) {
-		upstreamConnectResponseHdrHeap->m_heap->destroy();
-		delete upstreamConnectResponseHdrHeap;
-		upstreamConnectResponseHdrHeap = nullptr;
-	}
-	if (upstreamConnectResponse.valid()) {
-		upstreamConnectResponse.reset();
-	}
-}
-
-// End of upstream CONNECT methods
-
-// General CONNECT methods
-
-void SSLNetVConnection::freeConnect() {
-	if (connectParser != nullptr) {
-		http_parser_clear(connectParser);
-		ats_free(connectParser);
-		connectParser = nullptr;
-	}
-
-	if (connectReader) {
-		connectBuffer->dealloc_reader(connectReader);
-	}
-	connectReader = nullptr;
-
-	if (connectBuffer) {
-		free_MIOBuffer(connectBuffer);
-	}
-	connectBuffer = nullptr;
-
-	connectSize = 0;
-	connectWritten = 0;
-}
-
-void SSLNetVConnection::freeAllConnectMemory() {
-	checkedForConnect = false;
-	connectReceived = false;
-	connectHandled = false;
-	connectParseBegun = false;
-	connectParseComplete = false;
-	connectResponseBodyLength = 0;
-	connectBodyWritten = 0;
-	if (connectMessageHdrHeap != nullptr) {
-		connectMessageHdrHeap->m_heap->destroy();
-		delete connectMessageHdrHeap;
-		connectMessageHdrHeap = nullptr;
-	}
-	if (connectMessage.valid()) {
-		connectMessage.reset();
-	}
-	if (connectResponseHdrHeap != nullptr) {
-		connectResponseHdrHeap->m_heap->destroy();
-		delete connectResponseHdrHeap;
-		connectResponseHdrHeap = nullptr;
-	}
-	if (connectResponse.valid()) {
-		connectResponse.reset();
-	}
-
-	sentUpstreamConnect = false;
-	upstreamConnectResponseRead = false;
-	handledUpsteamConnect = false;
-
-	freeConnect();
-	freeUpstreamConnectRequest();
-	freeUpstreamConnectResponse();
-}
-
-// End of general CONNECT methods

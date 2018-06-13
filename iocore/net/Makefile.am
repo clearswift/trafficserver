@@ -94,6 +94,9 @@ libinknet_a_SOURCES = \
   P_UnixNetVConnection.h \
   P_UnixPollDescriptor.h \
   P_UnixUDPConnection.h \
+  ConnectHandler.h \
+  IncomingConnectHandler.h \
+  UpstreamConnectHandler.h \
   Socks.cc \
   SSLCertLookup.cc \
   SSLSessionCache.cc \
@@ -117,7 +120,10 @@ libinknet_a_SOURCES = \
   UnixNetVConnection.cc \
   UnixUDPConnection.cc \
   UnixUDPNet.cc \
-  SSLDynlock.cc
+  SSLDynlock.cc \
+  ConnectHandler.cc \
+  IncomingConnectHandler.cc \
+  UpstreamConnectHandler.cc 
 
 #test_UNUSED_SOURCES = \
 #  NetTest-http-server.c \

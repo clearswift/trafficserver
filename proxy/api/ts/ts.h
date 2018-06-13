@@ -2459,6 +2459,19 @@ tsapi TSReturnCode TSVConnUpstreamConnectGet(TSVConn vconn, TSMBuffer *bufp, TSM
 
 tsapi void TSHttpTxnSetParentAsOrigin(TSHttpTxn txnp);
 
+tsapi void *TSVConnUpstreamConnectResponseBufferSet(TSVConn vconn,
+		TSMBuffer *buffer, TSMLoc *loc);
+tsapi void TSUpstreamConnectResponseDestroy(TSMBuffer buffer, TSMLoc loc,
+		void *header);
+
+// TODO - this is not safe as the vconn could be re-used before this method is called
+// probable fix is to set the body by passing in a std::string as a void*
+// this string would be created in the plugin
+// another solution is to use TSMBuffer which can be grown by adding blocks
+// again - the buffer would be created in the plugin
+tsapi const char *TSVConnUpstreamConnectResponseBodyGet(TSVConn vconn,
+		int64_t *length);
+
 
 #ifdef __cplusplus
 }
