@@ -69,6 +69,7 @@ NetVCOptions::reset()
 
   sni_servername    = nullptr;
   clientCertificate = nullptr;
+  hostname = nullptr;
 }
 
 TS_INLINE void

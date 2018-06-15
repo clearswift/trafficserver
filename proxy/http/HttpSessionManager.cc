@@ -91,6 +91,31 @@ ServerSessionPool::validate_sni(HttpSM *sm, NetVConnection *netvc)
   return ((sm->t_state.scheme != URL_WKSIDX_HTTPS) || !session_sni || strncasecmp(session_sni, req_host, len) == 0);
 }
 
+/**
+ * This method is necessary because the validate_sni method checks the SNI value store against the pooled connection
+ * If an IP address was used to originally connect with then this will be null
+ * The host will be set for HTTPS requests (IP or host name) and is used to make sure that the pooled connection is valid -
+ * i.e. the requested host matches the pooled connection's one
+ * Note that if Traffic Server is configured as a normal forward proxy then HTTPS traffic is just streamed and does not
+ * use the connection pool. HTTP traffic does use this code but this method will always return true in this case
+ */
+bool ServerSessionPool::validateHost(HttpSM *sm, NetVConnection *netvc)
+{
+  int len = 0;
+  const char *req_host = sm->t_state.hdr_info.server_request.host_get(&len);
+
+  const char *hostname = netvc->options.hostname;
+
+  // if the new request is HTTPS and there is a host name available on the pooled connection but
+  // the host name does not match the new request's host name
+  if (sm->t_state.scheme == URL_WKSIDX_HTTPS && hostname && strncasecmp(hostname, req_host, len) != 0) {
+    Debug("http_ss", "%s does not match the requested host %s", hostname, std::string(req_host, len).c_str());
+    return false;
+  }
+
+  return true;
+}
+
 HSMresult_t
 ServerSessionPool::acquireSession(sockaddr const *addr, INK_MD5 const &hostname_hash, TSServerSessionSharingMatchType match_style,
                                   HttpSM *sm, HttpServerSession *&to_return)
@@ -118,7 +143,8 @@ ServerSessionPool::acquireSession(sockaddr const *addr, INK_MD5 const &hostname_
     // Note we don't have to check the port because it's checked as part of the IP address key.
     if (TS_SERVER_SESSION_SHARING_MATCH_IP != match_style) {
       while (loc) {
-        if (loc->hostname_hash == hostname_hash && validate_sni(sm, loc->get_netvc())) {
+        if (loc->hostname_hash == hostname_hash && validate_sni(sm, loc->get_netvc())
+            && validateHost(sm, loc->get_netvc())) {
           break;
         }
         ++loc;
