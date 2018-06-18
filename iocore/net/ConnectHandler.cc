@@ -47,6 +47,8 @@ ConnectHandler::ConnectHandler(SSLNetVConnection *inSslNetVConn) :
   this->connectResponse->m_heap = this->connectResponseHdrHeap->m_heap;
   this->connectResponse->create(HTTP_TYPE_RESPONSE);
   this->connectResponse->status_set(HTTP_STATUS_OK);
+
+  this->connectResponseBodyArray = new std::vector<char>;
 }
 
 ConnectHandler::~ConnectHandler()
@@ -252,7 +254,7 @@ int64_t ConnectHandler::readIntoBuffer(MIOBuffer *ioBuffer)
  * SSL_HANDSHAKE_WANT_READ - The entire string has not been read
  * EVENT_ERROR - A read occurred
  */
-int ConnectHandler::readStringFromNetwork(char *stringBuffer, int64_t stringLength, int64_t &totalRead)
+int ConnectHandler::readFromNetworkIntoArray(std::vector<char> *dataArray, int64_t stringLength, int64_t &totalRead)
 {
 
   int ret = EVENT_NONE;
@@ -264,7 +266,7 @@ int ConnectHandler::readStringFromNetwork(char *stringBuffer, int64_t stringLeng
       toRead = stringLength - totalRead;
     }
 
-    read = socketManager.read(sslNetVConn->con.fd, stringBuffer + totalRead, toRead);
+    read = socketManager.read(sslNetVConn->con.fd, &((*dataArray)[totalRead]), toRead);
 
     Debug("detail_connect_handler", "read %" PRId64, read);
 
@@ -337,9 +339,9 @@ void ConnectHandler::freeMemory()
     connectResponse = nullptr;
   }
 
-  if (connectResponseBody) {
-    delete[] connectResponseBody;
-    connectResponseBody = nullptr;
+  if (ownConnectResponseBodyArray) {
+    delete connectResponseBodyArray;
+    connectResponseBodyArray = nullptr;
   }
 
   freeGeneral();

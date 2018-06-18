@@ -160,9 +160,14 @@ int UpstreamConnectHander::readUpstreamConnectResponse()
     if (connectResponseBodyLength > 0) {
       Debug("upstream_connect_handler", "CONNECT response body detected of length %" PRId64, connectResponseBodyLength);
 
-      connectResponseBody = new char[connectResponseBodyLength];
+      connectResponseBodyArray->resize(connectResponseBodyLength);
 
       drainConnectReaderIntoBody();
+
+      // if all the data for the response has been read
+      if (connectBodyRead == connectResponseBodyLength) {
+        upstreamBodyRead = true;
+      }
     }
   }
 
@@ -177,7 +182,7 @@ void UpstreamConnectHander::drainConnectReaderIntoBody()
   int64_t availToRead = connectReader->block_read_avail();
   while (availToRead > 0) {
     char *start = connectReader->start();
-    memcpy(connectResponseBody + connectBodyRead, start, availToRead);
+    memcpy(&((*connectResponseBodyArray)[connectBodyRead]), start, availToRead);
     connectReader->consume(availToRead);
 
     connectBodyRead += availToRead;
@@ -199,8 +204,8 @@ void UpstreamConnectHander::drainConnectReaderIntoBody()
  */
 int UpstreamConnectHander::readUpstreamConnectResponseBody()
 {
-
-  int ret = readStringFromNetwork(connectResponseBody, connectResponseBodyLength, connectBodyRead);
+  int ret = readFromNetworkIntoArray(connectResponseBodyArray, connectResponseBodyLength,
+      connectBodyRead);
 
   if (ret == EVENT_NONE) {
     upstreamBodyRead = true;

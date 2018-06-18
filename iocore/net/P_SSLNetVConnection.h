@@ -311,7 +311,7 @@ public:
 
   void setUpstreamConnectResponseHeadersBuffer(HdrHeapSDKHandle *buffers, HTTPHdr *headers);
 
-  const char *getUpstreamConnectResponseBody(int64_t *length);
+  void setUpstreamConnectResponseBody(std::vector<char> *bodyArray);
 
 private:
   SSLNetVConnection(const SSLNetVConnection &);

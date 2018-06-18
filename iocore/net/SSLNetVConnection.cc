@@ -1760,7 +1760,7 @@ void SSLNetVConnection::setUpstreamConnectResponseHeadersBuffer(HdrHeapSDKHandle
   connectHandler->setConnectResponse(buffer, headers);
 }
 
-const char *SSLNetVConnection::getUpstreamConnectResponseBody(int64_t *length)
+void SSLNetVConnection::setUpstreamConnectResponseBody(std::vector<char> *bodyArray)
 {
-  return connectHandler->getConnectResponseBody(length);
+  connectHandler->setConnectResponseBodyArray(bodyArray);
 }

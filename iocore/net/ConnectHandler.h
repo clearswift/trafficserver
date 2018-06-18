@@ -32,6 +32,8 @@
 #if !defined(_ConnectHandler_h_)
 #define _ConnectHandler_h_
 
+#include <vector>
+
 #include "HTTP.h"
 #include "I_IOBuffer.h"
 #include "I_SocketManager.h"
@@ -58,8 +60,7 @@ public:
   void setConnectResponseBody(char *body, int64_t length)
   {
     connectResponseBodyLength = length;
-    connectResponseBody = new char[connectResponseBodyLength];
-    memcpy(connectResponseBody, body, connectResponseBodyLength);
+    connectResponseBody = body;
   }
 
   const char *getConnectResponseBody(int64_t *length)
@@ -102,6 +103,22 @@ public:
     ownConnectResponse = false;
   }
 
+  /**
+   * Override the CONNECT response body string
+   * The CONNECT response body is initially maintained internally
+   * This method allows an external string to be used instead
+   */
+  void setConnectResponseBodyArray(std::vector<char> *bodyArray)
+  {
+    if (ownConnectResponseBodyArray) {
+      delete connectResponseBodyArray;
+    }
+
+    connectResponseBodyArray = bodyArray;
+
+    ownConnectResponseBodyArray = false;
+  }
+
   // Overridden by derived classes
   virtual int doWork() = 0;
 
@@ -117,7 +134,7 @@ protected:
 
   int64_t readIntoBuffer(MIOBuffer *ioBuffer);
 
-  int readStringFromNetwork(char *stringBuffer, int64_t stringLength, int64_t &totalRead);
+  int readFromNetworkIntoArray(std::vector<char> *dataArray, int64_t stringLength, int64_t &totalRead);
 
   void freeGeneral();
 
@@ -149,6 +166,12 @@ protected:
   HTTPParser *connectParser = nullptr;
   int64_t connectSize = 0;
   int64_t connectWritten = 0;
+
+  // holds the body that is read from the network
+  std::vector<char> *connectResponseBodyArray = nullptr;
+
+  // whether this class owns the body array
+  bool ownConnectResponseBodyArray = true;
 
   // whether parsing is complete
   bool connectRequestParseComplete = false;

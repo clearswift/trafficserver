@@ -9689,12 +9689,12 @@ void TSUpstreamConnectResponseDestroy(TSMBuffer buffer, TSMLoc loc, void *header
   delete httpHeader;
 }
 
-const char* TSVConnUpstreamConnectResponseBodyGet(TSVConn vconn, int64_t *length)
+void TSVConnUpstreamConnectResponseBodySet(TSVConn vconn, void *bodyArray)
 {
   sdk_assert(sdk_sanity_check_iocore_structure(vconn) == TS_SUCCESS);
 
   NetVConnection *vc = reinterpret_cast<NetVConnection *>(vconn);
   SSLNetVConnection *ssl_vc = dynamic_cast<SSLNetVConnection *>(vc);
 
-  return ssl_vc->getUpstreamConnectResponseBody(length);
+  ssl_vc->setUpstreamConnectResponseBody(static_cast<std::vector<char>*>(bodyArray));
 }
