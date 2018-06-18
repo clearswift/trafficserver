@@ -185,6 +185,11 @@ struct NetVCOptions {
   ats_scoped_str clientCertificate;
   /// Reset all values to defaults.
 
+  /**
+   * Host name
+   */
+  ats_scoped_str hostname;
+
   uint8_t clientVerificationFlag = 0;
   void reset();
 
@@ -218,11 +223,19 @@ struct NetVCOptions {
   }
 
   self &
+  set_hostname(const char *name, size_t len)
+  {
+    hostname = ats_strndup(name, len);
+    return *this;
+  }
+
+  self &
   operator=(self const &that)
   {
     if (&that != this) {
       sni_servername    = nullptr; // release any current name.
       clientCertificate = nullptr;
+      hostname = nullptr;
       memcpy(this, &that, sizeof(self));
       if (that.sni_servername) {
         sni_servername.release(); // otherwise we'll free the source string.
@@ -231,6 +244,10 @@ struct NetVCOptions {
       if (that.clientCertificate) {
         clientCertificate.release();
         this->clientCertificate = ats_strdup(that.clientCertificate);
+      }
+      if (that.hostname) {
+        hostname.release();
+        this->hostname = ats_strdup(that.hostname);
       }
     }
     return *this;

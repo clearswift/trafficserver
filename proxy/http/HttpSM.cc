@@ -5061,6 +5061,11 @@ HttpSM::do_http_server_open(bool raw)
     const char *host = t_state.hdr_info.server_request.host_get(&len);
     if (host && len > 0) {
       opt.set_sni_servername(host, len);
+
+      // store the host name for use in selecting a valid connection from the pool in HttpSessionManager
+      // note that if the host is an IP address then set_sni_servername will set the sni member to null
+      // as IP addresses are not allowed in SNI. This is why the host is also stored below
+      opt.set_hostname(host, len);
     }
 
     SSLConfig::scoped_config params;

@@ -25,8 +25,9 @@
 
  IncomingConnectHandler.h
 
- TODO
-
+ Detects whether the incoming connection is raw SSL or a CONNECT request
+ If a CONNECT request then it reads in the incoming CONNECT request and
+ sends back a response
 
  ****************************************************************************/
 
@@ -35,19 +36,20 @@
 
 #include "ConnectHandler.h"
 
-class IncomingConnectHandler: public ConnectHandler {
+class IncomingConnectHandler: public ConnectHandler
+{
 public:
-	IncomingConnectHandler(SSLNetVConnection *inSslNetVConn);
+  IncomingConnectHandler(SSLNetVConnection *inSslNetVConn);
 
-	int doWork() override;
+  int doWork() override;
 
 private:
-	int detectConnect();
-	int parseIncomingConnect();
-	int sendConnectResponse();
+  int detectConnect();
+  int parseIncomingConnect();
+  int sendConnectResponse();
 
-	bool checkedForConnect = false;
-	bool connectReceived = false;
+  bool checkedForConnect = false;
+  bool connectReceived = false;
 };
 
 #endif /* _IncomingConnectHandler_h_ */
