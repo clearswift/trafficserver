@@ -9553,6 +9553,10 @@ TSVConnConnectGet(TSVConn vconn, TSMBuffer *bufp, TSMLoc *loc)
 
 	NetVConnection *vc = reinterpret_cast<NetVConnection *>(vconn);
 	SSLNetVConnection *ssl_vc = dynamic_cast<SSLNetVConnection *>(vc);
+  if (ssl_vc == nullptr) {
+    return TS_ERROR;
+  }
+
 	if (!ssl_vc->receivedConnect())
 	{
 	    return TS_ERROR;
@@ -9574,38 +9578,43 @@ TSVConnConnectGet(TSVConn vconn, TSMBuffer *bufp, TSMLoc *loc)
 TSReturnCode
 TSVConnConnectResponseGet(TSVConn vconn, TSMBuffer *bufp, TSMLoc *loc)
 {
-    sdk_assert(sdk_sanity_check_iocore_structure(vconn) == TS_SUCCESS);
-    sdk_assert(sdk_sanity_check_null_ptr((void *)bufp) == TS_SUCCESS);
-    sdk_assert(sdk_sanity_check_null_ptr((void *)loc) == TS_SUCCESS);
+  sdk_assert(sdk_sanity_check_iocore_structure(vconn) == TS_SUCCESS);
+  sdk_assert(sdk_sanity_check_null_ptr((void * )bufp) == TS_SUCCESS);
+  sdk_assert(sdk_sanity_check_null_ptr((void * )loc) == TS_SUCCESS);
 
-    NetVConnection *vc = reinterpret_cast<NetVConnection *>(vconn);
-    SSLNetVConnection *ssl_vc = dynamic_cast<SSLNetVConnection *>(vc);
-    if (!ssl_vc->receivedConnect())
-    {
-        return TS_ERROR;
-    }
-
-    HTTPHdr *hptr = ssl_vc->getConnectResponse();
-    if (hptr->valid())
-    {
-        *(reinterpret_cast<HTTPHdr **>(bufp)) = hptr;
-        *loc = reinterpret_cast<TSMLoc>(hptr->m_http);
-        if (sdk_sanity_check_mbuffer(*bufp) == TS_SUCCESS) {
-            hptr->mark_target_dirty();
-            return TS_SUCCESS;
-        }
-    }
+  NetVConnection *vc = reinterpret_cast<NetVConnection *>(vconn);
+  SSLNetVConnection *ssl_vc = dynamic_cast<SSLNetVConnection *>(vc);
+  if (ssl_vc == nullptr) {
     return TS_ERROR;
+  }
+
+  if (!ssl_vc->receivedConnect()) {
+    return TS_ERROR;
+  }
+
+  HTTPHdr *hptr = ssl_vc->getConnectResponse();
+  if (hptr->valid()) {
+    *(reinterpret_cast<HTTPHdr **>(bufp)) = hptr;
+    *loc = reinterpret_cast<TSMLoc>(hptr->m_http);
+    if (sdk_sanity_check_mbuffer(*bufp) == TS_SUCCESS) {
+      hptr->mark_target_dirty();
+      return TS_SUCCESS;
+    }
+  }
+  return TS_ERROR;
 }
 
 void TSVConnConnectResponseBodySet(TSVConn vconn, const char *body, int64_t length)
 {
-    sdk_assert(sdk_sanity_check_iocore_structure(vconn) == TS_SUCCESS);
+  sdk_assert(sdk_sanity_check_iocore_structure(vconn) == TS_SUCCESS);
 
-    NetVConnection *vc = reinterpret_cast<NetVConnection *>(vconn);
-    SSLNetVConnection *ssl_vc = dynamic_cast<SSLNetVConnection *>(vc);
+  NetVConnection *vc = reinterpret_cast<NetVConnection *>(vconn);
+  SSLNetVConnection *ssl_vc = dynamic_cast<SSLNetVConnection *>(vc);
+  if (ssl_vc == nullptr) {
+    return;
+  }
 
-    ssl_vc->setConnectResponseBody(const_cast<char *>(body), length);
+  ssl_vc->setConnectResponseBody(const_cast<char *>(body), length);
 }
 
 TSVConn TSHttpTxnOutgoingVConn(TSHttpTxn txnp)
@@ -9636,6 +9645,9 @@ TSReturnCode TSVConnUpstreamConnectGet(TSVConn vconn, TSMBuffer *bufp, TSMLoc *l
 
   NetVConnection *vc = reinterpret_cast<NetVConnection *>(vconn);
   SSLNetVConnection *ssl_vc = dynamic_cast<SSLNetVConnection *>(vc);
+  if (ssl_vc == nullptr) {
+    return TS_ERROR;
+  }
 
   HTTPHdr *hptr = ssl_vc->getUpstreamConnectRequest();
   if (hptr->valid()) {
@@ -9668,6 +9680,9 @@ void *TSVConnUpstreamConnectResponseBufferSet(TSVConn vconn, TSMBuffer *buffer, 
 
   NetVConnection *vc = reinterpret_cast<NetVConnection *>(vconn);
   SSLNetVConnection *ssl_vc = dynamic_cast<SSLNetVConnection *>(vc);
+  if (ssl_vc == nullptr) {
+    return nullptr;
+  }
 
   HdrHeapSDKHandle * hdr = reinterpret_cast<HdrHeapSDKHandle *>(*buffer);
 
@@ -9695,6 +9710,9 @@ void TSVConnUpstreamConnectResponseBodySet(TSVConn vconn, void *bodyArray)
 
   NetVConnection *vc = reinterpret_cast<NetVConnection *>(vconn);
   SSLNetVConnection *ssl_vc = dynamic_cast<SSLNetVConnection *>(vc);
+  if (ssl_vc == nullptr) {
+    return;
+  }
 
   ssl_vc->setUpstreamConnectResponseBody(static_cast<std::vector<char>*>(bodyArray));
 }
