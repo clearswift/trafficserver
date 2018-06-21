@@ -1031,6 +1031,11 @@ SSLNetVConnection::sslStartHandShake(int event, int &err)
         SSL_set_verify(this->ssl, verifyValue, verify_callback);
       }
 
+      if (this->sslReadyCallback != nullptr)
+      {
+         this->sslReadyCallback(this->ssl, this->sslReadyCallbackData);
+      }
+
       if (this->ssl == nullptr) {
         SSLErrorVC(this, "failed to create SSL client session");
         return EVENT_ERROR;

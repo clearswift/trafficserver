@@ -9716,3 +9716,16 @@ void TSVConnUpstreamConnectResponseBodySet(TSVConn vconn, void *bodyArray)
 
   ssl_vc->setUpstreamConnectResponseBody(static_cast<std::vector<char>*>(bodyArray));
 }
+
+void TSVConnSSLReadyCallbackSet(TSVConn vconn, void (*callback)(TSSslConnection sslConn, void *data), void *data)
+{
+  sdk_assert(sdk_sanity_check_iocore_structure(vconn) == TS_SUCCESS);
+
+  NetVConnection *vc = reinterpret_cast<NetVConnection *>(vconn);
+  SSLNetVConnection *ssl_vc = dynamic_cast<SSLNetVConnection *>(vc);
+  if (ssl_vc == nullptr) {
+    return;
+  }
+ 
+  ssl_vc->setSSLReadyCallback((void (*)(SSL *ssl, void *data))callback, data);
+}

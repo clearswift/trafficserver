@@ -313,8 +313,11 @@ public:
 
   void setUpstreamConnectResponseBody(std::vector<char> *bodyArray);
 
-  void setUpstreamConnectResponseHeadersBuffer(HdrHeapSDKHandle *buffers, HTTPHdr *headers);
-
+  void setSSLReadyCallback(void (*callback)(SSL *ssl, void *data), void *data)
+  {
+      this->sslReadyCallback = callback;
+      this->sslReadyCallbackData = data;
+  }
 private:
   SSLNetVConnection(const SSLNetVConnection &);
   SSLNetVConnection &operator=(const SSLNetVConnection &);
@@ -350,7 +353,10 @@ private:
   SessionAccept *sessionAcceptPtr;
   bool sslTrace;
 
-	ConnectHandler *connectHandler = nullptr;
+  ConnectHandler *connectHandler = nullptr;
+
+  void (*sslReadyCallback)(SSL *ssl, void *data) = nullptr;
+  void *sslReadyCallbackData = nullptr;
 };
 
 typedef int (SSLNetVConnection::*SSLNetVConnHandler)(int, void *);

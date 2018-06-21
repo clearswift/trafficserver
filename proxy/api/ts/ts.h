@@ -2464,6 +2464,7 @@ tsapi void TSUpstreamConnectResponseDestroy(TSMBuffer buffer, TSMLoc loc, void *
 
 tsapi void TSVConnUpstreamConnectResponseBodySet(TSVConn vconn, void *bodyArray);
 
+tsapi void TSVConnSSLReadyCallbackSet(TSVConn vconn, void (*callback)(TSSslConnection sslConn, void *data), void *data);
 
 #ifdef __cplusplus
 }
