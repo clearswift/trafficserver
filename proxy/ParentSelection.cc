@@ -120,6 +120,7 @@ ParentConfigParams::findParent(HttpRequestData *rdata, ParentResult *result, uns
     result->result       = PARENT_SPECIFIED;
     result->hostname     = rdata->api_info->parent_proxy_name;
     result->port         = rdata->api_info->parent_proxy_port;
+    result->force_parent_as_origin = rdata->api_info->parent_is_origin;
     result->rec          = extApiRecord;
     result->start_parent = 0;
     result->last_parent  = 0;

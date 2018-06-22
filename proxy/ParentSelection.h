@@ -176,6 +176,7 @@ struct ParentResult {
   const char *hostname;
   int port;
   bool retry;
+  bool force_parent_as_origin = false;
 
   void
   reset()
@@ -209,6 +210,9 @@ struct ParentResult {
   bool
   parent_is_proxy() const
   {
+    if (force_parent_as_origin){
+        return false;
+    }
     // Parents set by the TSHttpTxnParentProxySet API are always considered proxies rather than origins.
     return is_api_result() ? true : rec->parent_is_proxy;
   }

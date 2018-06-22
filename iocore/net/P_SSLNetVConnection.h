@@ -70,6 +70,8 @@ class SSLNextProtocolSet;
 class SSLNextProtocolAccept;
 struct SSLCertLookup;
 
+class ConnectHandler;
+
 typedef enum {
   SSL_HOOK_OP_DEFAULT,                     ///< Null / initialization value. Do normal processing.
   SSL_HOOK_OP_TUNNEL,                      ///< Switch to blind tunnel
@@ -228,15 +230,6 @@ public:
         }
       }
       break;
-    case HANDSHAKE_HOOKS_CONNECT_RECEIVED:
-    	if (eventId == TS_EVENT_VCONN_PRE_ACCEPT) {
-    	  retval = true;
-	} else if (eventId == TS_EVENT_SSL_SERVERNAME) {
-	  if (curHook) {
-	    retval = true;
-	  }
-	}
-      break;
     case HANDSHAKE_HOOKS_SNI:
       if (eventId == TS_EVENT_VCONN_PRE_ACCEPT) {
         retval = true;
@@ -306,39 +299,32 @@ public:
   /// Set by asynchronous hooks to request a specific operation.
   SslVConnOp hookOpRequested;
 
-  bool receivedConnect() {
-    // CONNECT has been received and is complete
-    // (but might not have been fully handled yet).
-    return connectParseComplete;
-  }
+  bool receivedConnect();
 
-  HTTPHdr *getConnect() {
-    return &connectMessage;
-  }
+  HTTPHdr *getConnect();
 
-  HTTPHdr *getConnectResponse() {
-    return &connectResponse;
-  }
+  HTTPHdr *getConnectResponse();
 
-  void setConnectResponseBody(char *body, int64_t length) {
-    connectResponseBody = body;
-    connectResponseBodyLength = length;
-  }
+  void setConnectResponseBody(char *body, int64_t length);
 
+  HTTPHdr *getUpstreamConnectRequest();
+
+  void setUpstreamConnectResponseHeadersBuffer(HdrHeapSDKHandle *buffers, HTTPHdr *headers);
+
+  void setUpstreamConnectResponseBody(std::vector<char> *bodyArray);
+
+  void setSSLReadyCallback(void (*callback)(SSL *ssl, void *data), void *data)
+  {
+      this->sslReadyCallback = callback;
+      this->sslReadyCallbackData = data;
+  }
 private:
   SSLNetVConnection(const SSLNetVConnection &);
   SSLNetVConnection &operator=(const SSLNetVConnection &);
 
   ts::StringView map_tls_protocol_to_tag(const char *proto_string) const;
   bool update_rbio(bool move_to_socket);
-  int handleConnect();
-  void prepareConnectBuffer();
-  void sendConnectResponse();
 
-  bool connectReceived;
-  bool connectParseBegun;
-  bool connectParseComplete;
-  bool connectHandled;
   bool sslHandShakeComplete;
   bool sslClientRenegotiationAbort;
   bool sslSessionCacheHit;
@@ -356,7 +342,6 @@ private:
   enum SSLHandshakeHookState {
     HANDSHAKE_HOOKS_PRE,
     HANDSHAKE_HOOKS_PRE_INVOKE,
-    HANDSHAKE_HOOKS_CONNECT_RECEIVED,
     HANDSHAKE_HOOKS_SNI,
     HANDSHAKE_HOOKS_CERT,
     HANDSHAKE_HOOKS_CERT_INVOKE,
@@ -368,12 +353,10 @@ private:
   SessionAccept *sessionAcceptPtr;
   bool sslTrace;
 
-  HdrHeapSDKHandle *connectMessageHdrHeap = nullptr;
-  HTTPHdr connectMessage;
-  HdrHeapSDKHandle *connectResponseHdrHeap = nullptr;
-  HTTPHdr connectResponse;
-  char *connectResponseBody = nullptr;
-  int64_t connectResponseBodyLength = 0;
+  ConnectHandler *connectHandler = nullptr;
+
+  void (*sslReadyCallback)(SSL *ssl, void *data) = nullptr;
+  void *sslReadyCallbackData = nullptr;
 };
 
 typedef int (SSLNetVConnection::*SSLNetVConnHandler)(int, void *);

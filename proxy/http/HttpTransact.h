@@ -234,6 +234,7 @@ struct HttpApiInfo {
   bool cache_transformed;
   bool logging_enabled;
   bool retry_intercept_failures;
+  bool parent_is_origin;
 
   HttpApiInfo()
     : parent_proxy_name(NULL),
@@ -241,7 +242,8 @@ struct HttpApiInfo {
       cache_untransformed(false),
       cache_transformed(true),
       logging_enabled(true),
-      retry_intercept_failures(false)
+      retry_intercept_failures(false),
+	  parent_is_origin(false)
   {
   }
 };

@@ -3592,6 +3592,14 @@ HttpTransact::handle_response_from_parent(State *s)
   DebugTxn("http_trans", "[handle_response_from_parent] (hrfp)");
   HTTP_RELEASE_ASSERT(s->current.server == &s->parent_info);
 
+    // plugin call
+	// this can probably be removed when we use one proxy (rather than inbound and outbound proxies)
+    s->server_info.state = s->current.state;
+	if (s->fp_tsremap_os_response) {
+        s->fp_tsremap_os_response(s->remap_plugin_instance, reinterpret_cast<TSHttpTxn>(s->state_machine),
+                s->current.state);
+    }
+  
   // response is from a parent origin server.
   if (is_response_valid(s, &s->hdr_info.server_response) && s->current.request_to == HttpTransact::PARENT_PROXY &&
       !s->parent_result.parent_is_proxy()) {

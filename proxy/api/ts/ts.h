@@ -2455,6 +2455,17 @@ tsapi TSReturnCode TSVConnConnectGet(TSVConn vconn, TSMBuffer *bufp, TSMLoc *loc
 tsapi TSReturnCode TSVConnConnectResponseGet(TSVConn vconn, TSMBuffer *bufp, TSMLoc *loc);
 tsapi void TSVConnConnectResponseBodySet(TSVConn vconn, const char *body, int64_t length);
 
+tsapi TSReturnCode TSVConnUpstreamConnectGet(TSVConn vconn, TSMBuffer *bufp, TSMLoc *loc);
+
+tsapi void TSHttpTxnSetParentAsOrigin(TSHttpTxn txnp);
+
+tsapi void *TSVConnUpstreamConnectResponseBufferSet(TSVConn vconn, TSMBuffer *buffer, TSMLoc *loc);
+tsapi void TSUpstreamConnectResponseDestroy(TSMBuffer buffer, TSMLoc loc, void *header);
+
+tsapi void TSVConnUpstreamConnectResponseBodySet(TSVConn vconn, void *bodyArray);
+
+tsapi void TSVConnSSLReadyCallbackSet(TSVConn vconn, void (*callback)(TSSslConnection sslConn, void *data), void *data);
+
 #ifdef __cplusplus
 }
 #endif /* __cplusplus */

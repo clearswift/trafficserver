@@ -66,6 +66,7 @@ public:
   /// Handle events from server sessions.
   int eventHandler(int event, void *data);
   static bool validate_sni(HttpSM *sm, NetVConnection *netvc);
+  static bool validateHost(HttpSM *sm, NetVConnection *netvc);
 
 protected:
   /// Interface class for IP map.

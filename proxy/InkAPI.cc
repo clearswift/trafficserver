@@ -9553,6 +9553,10 @@ TSVConnConnectGet(TSVConn vconn, TSMBuffer *bufp, TSMLoc *loc)
 
 	NetVConnection *vc = reinterpret_cast<NetVConnection *>(vconn);
 	SSLNetVConnection *ssl_vc = dynamic_cast<SSLNetVConnection *>(vc);
+  if (ssl_vc == nullptr) {
+    return TS_ERROR;
+  }
+
 	if (!ssl_vc->receivedConnect())
 	{
 	    return TS_ERROR;
@@ -9574,38 +9578,43 @@ TSVConnConnectGet(TSVConn vconn, TSMBuffer *bufp, TSMLoc *loc)
 TSReturnCode
 TSVConnConnectResponseGet(TSVConn vconn, TSMBuffer *bufp, TSMLoc *loc)
 {
-    sdk_assert(sdk_sanity_check_iocore_structure(vconn) == TS_SUCCESS);
-    sdk_assert(sdk_sanity_check_null_ptr((void *)bufp) == TS_SUCCESS);
-    sdk_assert(sdk_sanity_check_null_ptr((void *)loc) == TS_SUCCESS);
+  sdk_assert(sdk_sanity_check_iocore_structure(vconn) == TS_SUCCESS);
+  sdk_assert(sdk_sanity_check_null_ptr((void * )bufp) == TS_SUCCESS);
+  sdk_assert(sdk_sanity_check_null_ptr((void * )loc) == TS_SUCCESS);
 
-    NetVConnection *vc = reinterpret_cast<NetVConnection *>(vconn);
-    SSLNetVConnection *ssl_vc = dynamic_cast<SSLNetVConnection *>(vc);
-    if (!ssl_vc->receivedConnect())
-    {
-        return TS_ERROR;
-    }
-
-    HTTPHdr *hptr = ssl_vc->getConnectResponse();
-    if (hptr->valid())
-    {
-        *(reinterpret_cast<HTTPHdr **>(bufp)) = hptr;
-        *loc = reinterpret_cast<TSMLoc>(hptr->m_http);
-        if (sdk_sanity_check_mbuffer(*bufp) == TS_SUCCESS) {
-            hptr->mark_target_dirty();
-            return TS_SUCCESS;
-        }
-    }
+  NetVConnection *vc = reinterpret_cast<NetVConnection *>(vconn);
+  SSLNetVConnection *ssl_vc = dynamic_cast<SSLNetVConnection *>(vc);
+  if (ssl_vc == nullptr) {
     return TS_ERROR;
+  }
+
+  if (!ssl_vc->receivedConnect()) {
+    return TS_ERROR;
+  }
+
+  HTTPHdr *hptr = ssl_vc->getConnectResponse();
+  if (hptr->valid()) {
+    *(reinterpret_cast<HTTPHdr **>(bufp)) = hptr;
+    *loc = reinterpret_cast<TSMLoc>(hptr->m_http);
+    if (sdk_sanity_check_mbuffer(*bufp) == TS_SUCCESS) {
+      hptr->mark_target_dirty();
+      return TS_SUCCESS;
+    }
+  }
+  return TS_ERROR;
 }
 
 void TSVConnConnectResponseBodySet(TSVConn vconn, const char *body, int64_t length)
 {
-    sdk_assert(sdk_sanity_check_iocore_structure(vconn) == TS_SUCCESS);
+  sdk_assert(sdk_sanity_check_iocore_structure(vconn) == TS_SUCCESS);
 
-    NetVConnection *vc = reinterpret_cast<NetVConnection *>(vconn);
-    SSLNetVConnection *ssl_vc = dynamic_cast<SSLNetVConnection *>(vc);
+  NetVConnection *vc = reinterpret_cast<NetVConnection *>(vconn);
+  SSLNetVConnection *ssl_vc = dynamic_cast<SSLNetVConnection *>(vc);
+  if (ssl_vc == nullptr) {
+    return;
+  }
 
-    ssl_vc->setConnectResponseBody(const_cast<char *>(body), length);
+  ssl_vc->setConnectResponseBody(const_cast<char *>(body), length);
 }
 
 TSVConn TSHttpTxnOutgoingVConn(TSHttpTxn txnp)
@@ -9628,3 +9637,95 @@ TSVConn TSHttpTxnOutgoingVConn(TSHttpTxn txnp)
   return reinterpret_cast<TSVConn>(vc);
 }
 
+TSReturnCode TSVConnUpstreamConnectGet(TSVConn vconn, TSMBuffer *bufp, TSMLoc *loc)
+{
+  sdk_assert(sdk_sanity_check_iocore_structure(vconn) == TS_SUCCESS);
+  sdk_assert(sdk_sanity_check_null_ptr((void * )bufp) == TS_SUCCESS);
+  sdk_assert(sdk_sanity_check_null_ptr((void * )loc) == TS_SUCCESS);
+
+  NetVConnection *vc = reinterpret_cast<NetVConnection *>(vconn);
+  SSLNetVConnection *ssl_vc = dynamic_cast<SSLNetVConnection *>(vc);
+  if (ssl_vc == nullptr) {
+    return TS_ERROR;
+  }
+
+  HTTPHdr *hptr = ssl_vc->getUpstreamConnectRequest();
+  if (hptr->valid()) {
+    *(reinterpret_cast<HTTPHdr **>(bufp)) = hptr;
+    *loc = reinterpret_cast<TSMLoc>(hptr->m_http);
+    if (sdk_sanity_check_mbuffer(*bufp) == TS_SUCCESS) {
+      hptr->mark_target_dirty();
+      return TS_SUCCESS;
+    }
+  }
+  return TS_ERROR;
+}
+
+void TSHttpTxnSetParentAsOrigin(TSHttpTxn txnp)
+{
+  sdk_assert(sdk_sanity_check_txn(txnp) == TS_SUCCESS);
+
+  HttpSM *sm = (HttpSM *) txnp;
+
+  sm->t_state.api_info.parent_is_origin = true;
+}
+
+void *TSVConnUpstreamConnectResponseBufferSet(TSVConn vconn, TSMBuffer *buffer, TSMLoc *loc)
+{
+  sdk_assert(sdk_sanity_check_iocore_structure(vconn) == TS_SUCCESS);
+
+  *buffer = TSMBufferCreate();
+
+  sdk_assert(sdk_sanity_check_mbuffer(*buffer) == TS_SUCCESS);
+
+  NetVConnection *vc = reinterpret_cast<NetVConnection *>(vconn);
+  SSLNetVConnection *ssl_vc = dynamic_cast<SSLNetVConnection *>(vc);
+  if (ssl_vc == nullptr) {
+    return nullptr;
+  }
+
+  HdrHeapSDKHandle * hdr = reinterpret_cast<HdrHeapSDKHandle *>(*buffer);
+
+  HTTPHdr *header = new HTTPHdr;
+  header->m_heap = hdr->m_heap;
+  header->create(HTTP_TYPE_RESPONSE);
+  *loc = reinterpret_cast<TSMLoc>(header->m_http);
+  ssl_vc->setUpstreamConnectResponseHeadersBuffer(hdr, header);
+  return header;
+}
+
+void TSUpstreamConnectResponseDestroy(TSMBuffer buffer, TSMLoc loc, void *header)
+{
+  sdk_assert(sdk_sanity_check_mbuffer(buffer) == TS_SUCCESS);
+
+  TSHandleMLocRelease(buffer, TS_NULL_MLOC, loc);
+  TSMBufferDestroy(buffer);
+  HTTPHdr *httpHeader = reinterpret_cast<HTTPHdr*>(header);
+  delete httpHeader;
+}
+
+void TSVConnUpstreamConnectResponseBodySet(TSVConn vconn, void *bodyArray)
+{
+  sdk_assert(sdk_sanity_check_iocore_structure(vconn) == TS_SUCCESS);
+
+  NetVConnection *vc = reinterpret_cast<NetVConnection *>(vconn);
+  SSLNetVConnection *ssl_vc = dynamic_cast<SSLNetVConnection *>(vc);
+  if (ssl_vc == nullptr) {
+    return;
+  }
+
+  ssl_vc->setUpstreamConnectResponseBody(static_cast<std::vector<char>*>(bodyArray));
+}
+
+void TSVConnSSLReadyCallbackSet(TSVConn vconn, void (*callback)(TSSslConnection sslConn, void *data), void *data)
+{
+  sdk_assert(sdk_sanity_check_iocore_structure(vconn) == TS_SUCCESS);
+
+  NetVConnection *vc = reinterpret_cast<NetVConnection *>(vconn);
+  SSLNetVConnection *ssl_vc = dynamic_cast<SSLNetVConnection *>(vc);
+  if (ssl_vc == nullptr) {
+    return;
+  }
+ 
+  ssl_vc->setSSLReadyCallback((void (*)(SSL *ssl, void *data))callback, data);
+}
