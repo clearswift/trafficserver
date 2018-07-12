@@ -76,7 +76,15 @@ ink_get_max_files()
   struct rlimit lim;
 
   // Linux-only ...
-  if ((fd = fopen("/proc/sys/fs/file-max", "r"))) {
+
+  // attempt to open per process max file limit
+  fd = fopen("/proc/sys/fs/nr_open", "r");
+  if (!fd) {
+    // attempt to open system max file limit
+    fd = fopen("/proc/sys/fs/file-max", "r");
+  }
+
+  if (fd) {
     uint64_t fmax;
     if (fscanf(fd, "%" PRIu64 "", &fmax) == 1) {
       fclose(fd);
