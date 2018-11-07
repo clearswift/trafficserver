@@ -136,6 +136,7 @@ c:member:`TS_CONFIG_HTTP_NEGATIVE_CACHING_LIFETIME`                 :ts:cv:`prox
 c:member:`TS_CONFIG_HTTP_NEGATIVE_REVALIDATING_ENABLED`             :ts:cv:`proxy.config.http.negative_revalidating_enabled`
 c:member:`TS_CONFIG_HTTP_NEGATIVE_REVALIDATING_LIFETIME`            :ts:cv:`proxy.config.http.negative_revalidating_lifetime`
 c:member:`TS_CONFIG_HTTP_NORMALIZE_AE_GZIP`                         :ts:cv:`proxy.config.http.normalize_ae_gzip`
+c:member:`TS_CONFIG_HTTP_ALLOW_HALF_OPEN`                           :ts:cv:`proxy.config.http.allow_half_open`
 c:member:`TS_CONFIG_HTTP_NUMBER_OF_REDIRECTIONS`                    :ts:cv:`proxy.config.http.number_of_redirections`
 c:member:`TS_CONFIG_HTTP_ORIGIN_MAX_CONNECTIONS`                    :ts:cv:`proxy.config.http.origin_max_connections`
 c:member:`TS_CONFIG_HTTP_ORIGIN_MAX_CONNECTIONS_QUEUE`              :ts:cv:`proxy.config.http.origin_max_connections_queue`
