@@ -7574,6 +7574,7 @@ const char *SDK_Overridable_Configs[TS_CONFIG_LAST_ENTRY] = {
   "proxy.config.http.flow_control.high_water",
   "proxy.config.http.cache.range.lookup",
   "proxy.config.http.normalize_ae_gzip",
+  "proxy.config.http.allow_half_open",
   "proxy.config.http.default_buffer_size",
   "proxy.config.http.default_buffer_water_mark",
   "proxy.config.http.request_header_max_size",

@@ -86,12 +86,6 @@ public:
     return false;
   }
 
-  virtual bool
-  allow_half_open() const
-  {
-    return true;
-  }
-
   void set_parent(ProxyClientSession *new_parent);
 
   virtual uint16_t
@@ -162,6 +156,8 @@ public:
       parent->cancel_inactivity_timeout();
   }
   void transaction_done();
+
+  bool allow_half_open() const override;
 
 protected:
   uint16_t outbound_port;

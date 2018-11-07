@@ -1020,6 +1020,8 @@ HttpConfig::startup()
   HttpEstablishStaticConfigLongLong(c.oride.cache_max_stale_age, "proxy.config.http.cache.max_stale_age");
   HttpEstablishStaticConfigByte(c.oride.srv_enabled, "proxy.config.srv_enabled");
 
+  HttpEstablishStaticConfigByte(c.oride.allow_half_open, "proxy.config.http.allow_half_open");
+
   HttpEstablishStaticConfigLongLong(c.oride.freshness_fuzz_time, "proxy.config.http.cache.fuzz.time");
   HttpEstablishStaticConfigLongLong(c.oride.freshness_fuzz_min_time, "proxy.config.http.cache.fuzz.min_time");
   HttpEstablishStaticConfigFloat(c.oride.freshness_fuzz_prob, "proxy.config.http.cache.fuzz.probability");
@@ -1321,6 +1323,8 @@ HttpConfig::reconfigure()
   params->cache_vary_default_other  = ats_strdup(m_master.cache_vary_default_other);
 
   params->oride.srv_enabled = m_master.oride.srv_enabled;
+
+  params->oride.allow_half_open = m_master.oride.allow_half_open;
 
   // open read failure retries
   params->oride.max_cache_open_read_retries = m_master.oride.max_cache_open_read_retries;

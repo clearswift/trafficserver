@@ -478,7 +478,8 @@ struct OverridableHttpConfigParams {
       freshness_fuzz_prob(0.005),
       background_fill_threshold(0.5),
       client_cert_filename(NULL),
-      client_cert_filepath(NULL)
+      client_cert_filepath(NULL),
+      allow_half_open(1)
   {
   }
 
@@ -708,6 +709,13 @@ struct OverridableHttpConfigParams {
   MgmtFloat background_fill_threshold;
   char *client_cert_filename;
   char *client_cert_filepath;
+
+
+   /////////////////////////////////////////////////
+   // Keep connection open after client sends FIN //
+   /////////////////////////////////////////////////
+   MgmtByte allow_half_open;
+   
 };
 
 /////////////////////////////////////////////////////////////
