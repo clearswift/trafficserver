@@ -1365,7 +1365,17 @@ HttpTransact::HandleRequest(State *s)
     TRANSACT_RETURN(SM_ACTION_INTERNAL_CACHE_NOOP, nullptr);
   }
 
-  if (s->http_config_param->no_dns_forward_to_parent && s->scheme != URL_WKSIDX_HTTPS &&
+  //
+  // Clearswift modification
+  //
+  // When SWG is using upstream proxy, we might not have DNS available locally,
+  // force ALL requests to go via the parent proxy and avoid DNS queries.
+  //
+  // This is safe as parents.config should not be routing based on IP address, only hostname
+  //
+  // Removed s->scheme != URL_WKSIDX_HTTPS from the below conditional
+  //
+  if (s->http_config_param->no_dns_forward_to_parent &&
       strcmp(s->server_info.name, "127.0.0.1") != 0) {
     // for HTTPS requests, we must go directly to the
     // origin server. Ignore the no_dns_just_forward_to_parent setting.
