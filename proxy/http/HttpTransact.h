@@ -21,8 +21,7 @@
   limitations under the License.
  */
 
-#if !defined(_HttpTransact_h_)
-#define _HttpTransact_h_
+#pragma once
 
 #include "ts/ink_platform.h"
 #include "P_HostDB.h"
@@ -395,7 +394,7 @@ public:
     TOTAL_RESPONSE_ERROR_TYPES
   };
 
-  // Please do not forget to fix TSServerState (ts/ts.h)
+  // Please do not forget to fix TSServerState (ts/apidefs.h.in)
   // in case of any modifications in ServerState_t
   enum ServerState_t {
     STATE_UNDEFINED = 0,
@@ -473,10 +472,6 @@ public:
     SM_ACTION_INTERNAL_100_RESPONSE,
     SM_ACTION_INTERNAL_REQUEST,
     SM_ACTION_SEND_ERROR_CACHE_NOOP,
-
-#ifdef PROXY_DRAIN
-    SM_ACTION_DRAIN_REQUEST_BODY,
-#endif /* PROXY_DRAIN */
 
     SM_ACTION_SERVE_FROM_CACHE,
     SM_ACTION_SERVER_READ,
@@ -1384,5 +1379,3 @@ is_response_body_precluded(HTTPStatus status_code, int method)
 }
 
 inkcoreapi extern ink_time_t ink_cluster_time(void);
-
-#endif

@@ -21,8 +21,7 @@
   limitations under the License.
  */
 
-#ifndef __PROXY_CLIENT_SESSION_H__
-#define __PROXY_CLIENT_SESSION_H__
+#pragma once
 
 #include "ts/ink_platform.h"
 #include "ts/ink_resolver.h"
@@ -38,6 +37,21 @@
 class ProxyClientTransaction;
 struct AclRecord;
 
+enum class ProxyErrorClass {
+  NONE,
+  SSN,
+  TXN,
+};
+
+struct ProxyError {
+  ProxyError() {}
+  ProxyError(ProxyErrorClass cl, uint32_t co) : cls(cl), code(co) {}
+  size_t str(char *buf, size_t buf_len);
+
+  ProxyErrorClass cls = ProxyErrorClass::NONE;
+  uint32_t code       = 0;
+};
+
 class ProxyClientSession : public VConnection
 {
 public:
@@ -50,7 +64,6 @@ public:
   virtual void new_connection(NetVConnection *new_vc, MIOBuffer *iobuf, IOBufferReader *reader, bool backdoor) = 0;
 
   virtual NetVConnection *get_netvc() const = 0;
-  virtual void release_netvc()              = 0;
 
   virtual int get_transact_count() const = 0;
 
@@ -243,5 +256,3 @@ private:
 
   friend void TSHttpSsnDebugSet(TSHttpSsn, int);
 };
-
-#endif // __PROXY_CLIENT_SESSION_H__

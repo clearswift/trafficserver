@@ -23,6 +23,8 @@
 
 #define _HOSTDB_CC_
 
+#include "ts/ink_std_compat.h"
+
 #include "P_HostDB.h"
 #include "P_RefCountCacheSerializer.h"
 #include "ts/I_Layout.h"
@@ -566,12 +568,10 @@ HostDBContinuation::insert(unsigned int attl)
 
   ink_assert(this_ethread() == hostDB.refcountcache->lock_for_key(folded_md5)->thread_holding);
 
-  HostDBInfo *r = HostDBInfo::alloc();
-  r->key        = folded_md5;
-  if (attl > HOST_DB_MAX_TTL)
-    attl                 = HOST_DB_MAX_TTL;
-  r->ip_timeout_interval = attl;
+  HostDBInfo *r          = HostDBInfo::alloc();
+  r->key                 = folded_md5;
   r->ip_timestamp        = hostdb_current_interval;
+  r->ip_timeout_interval = std::clamp(attl, 1u, HOST_DB_MAX_TTL);
   Debug("hostdb", "inserting for: %.*s: (md5: %" PRIx64 ") now: %u timeout: %u ttl: %u", md5.host_len, md5.host_name, folded_md5,
         r->ip_timestamp, r->ip_timeout_interval, attl);
 
@@ -816,20 +816,22 @@ HostDBProcessor::getbyname_imm(Continuation *cont, process_hostdb_info_pfn proce
       loop = false; // loop only on explicit set for retry
       // find the partition lock
       ProxyMutex *bucket_mutex = hostDB.refcountcache->lock_for_key(md5.hash.fold());
-      SCOPED_MUTEX_LOCK(lock, bucket_mutex, thread);
-      // do a level 1 probe for immediate result.
-      Ptr<HostDBInfo> r = probe(bucket_mutex, md5, false);
-      if (r) {
-        if (r->is_failed()) // fail, see if we should retry with alternate
-          loop = check_for_retry(md5.db_mark, opt.host_res_style);
-        if (!loop) {
-          // No retry -> final result. Return it.
-          Debug("hostdb", "immediate answer for %.*s", md5.host_len, md5.host_name);
-          HOSTDB_INCREMENT_DYN_STAT(hostdb_total_hits_stat);
-          (cont->*process_hostdb_info)(r.get());
-          return ACTION_RESULT_DONE;
+      MUTEX_TRY_LOCK(lock, bucket_mutex, thread);
+      if (lock.is_locked()) {
+        // do a level 1 probe for immediate result.
+        Ptr<HostDBInfo> r = probe(bucket_mutex, md5, false);
+        if (r) {
+          if (r->is_failed()) // fail, see if we should retry with alternate
+            loop = check_for_retry(md5.db_mark, opt.host_res_style);
+          if (!loop) {
+            // No retry -> final result. Return it.
+            Debug("hostdb", "immediate answer for %.*s", md5.host_len, md5.host_name);
+            HOSTDB_INCREMENT_DYN_STAT(hostdb_total_hits_stat);
+            (cont->*process_hostdb_info)(r.get());
+            return ACTION_RESULT_DONE;
+          }
+          md5.refresh(); // Update for retry.
         }
-        md5.refresh(); // Update for retry.
       }
     } while (loop);
   }
@@ -1070,16 +1072,20 @@ HostDBContinuation::lookup_done(IpAddr const &ip, const char *aname, bool around
       Debug("hostdb", "failed for %s", md5.ip.toString(b, sizeof b));
     }
     if (r == nullptr) {
-      r = insert(hostdb_ip_fail_timeout_interval); // currently ... 0
+      r = insert(hostdb_ip_fail_timeout_interval);
     } else {
-      ttl_seconds = hostdb_ip_fail_timeout_interval;
+      r->ip_timestamp        = hostdb_current_interval;
+      r->ip_timeout_interval = std::clamp(hostdb_ip_fail_timeout_interval, 1u, HOST_DB_MAX_TTL);
     }
+
     r->round_robin     = false;
     r->round_robin_elt = false;
     r->is_srv          = is_srv();
     r->reverse_dns     = !is_byname() && !is_srv();
 
     r->set_failed();
+    return r;
+
   } else {
     switch (hostdb_ttl_mode) {
     default:
@@ -1102,15 +1108,14 @@ HostDBContinuation::lookup_done(IpAddr const &ip, const char *aname, bool around
     }
     HOSTDB_SUM_DYN_STAT(hostdb_ttl_stat, ttl_seconds);
 
-    // Not sure about this - it seems wrong but I can't be sure. If we got a fail
-    // in the DNS event, 0 is passed in which we then change to 1 here. Do we need this
-    // to be non-zero to avoid an infinite timeout?
-    if (0 == ttl_seconds)
-      ttl_seconds = 1;
-
     if (r == nullptr) {
-      r = insert(hostdb_ip_fail_timeout_interval); // currently ... 0
+      r = insert(ttl_seconds);
+    } else {
+      // update the TTL
+      r->ip_timestamp        = hostdb_current_interval;
+      r->ip_timeout_interval = std::clamp(ttl_seconds, 1u, HOST_DB_MAX_TTL);
     }
+
     r->round_robin_elt = false; // only true for elements explicitly added as RR elements.
     if (is_byname()) {
       ip_text_buffer b;
@@ -1145,13 +1150,6 @@ HostDBContinuation::lookup_done(IpAddr const &ip, const char *aname, bool around
     }
   }
 
-  // Finally, set the TTL
-  r->ip_timeout_interval = ttl_seconds;
-  // set the "lookup_done" interval
-  r->ip_timestamp = hostdb_current_interval;
-
-  if (from_cont)
-    do_put_response(from, r, from_cont);
   ink_assert(!r->round_robin || !r->reverse_dns);
   return r;
 }
@@ -1527,7 +1525,7 @@ HostDBContinuation::do_get_response(Event * /* e ATS_UNUSED */)
   //
   HostDB_get_message msg;
 
-  memset(&msg, 0, sizeof(msg));
+  memset(static_cast<void *>(&msg), 0, sizeof(msg));
   int len = make_get_message((char *)&msg, sizeof(HostDB_get_message));
 
   // Setup this continuation, with a timeout
@@ -1570,7 +1568,7 @@ HostDBContinuation::make_put_message(HostDBInfo *r, Continuation *c, char *buf, 
   ink_assert(size >= (int)sizeof(HostDB_put_message));
 
   HostDB_put_message *msg = reinterpret_cast<HostDB_put_message *>(buf);
-  memset(msg, 0, sizeof(HostDB_put_message));
+  memset(static_cast<void *>(msg), 0, sizeof(HostDB_put_message));
 
   msg->md5  = md5.hash;
   msg->cont = c;

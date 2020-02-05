@@ -88,8 +88,9 @@ CacheVC::updateVector(int /* event ATS_UNUSED */, Event * /* e ATS_UNUSED */)
           return openWriteCloseDir(EVENT_IMMEDIATE, nullptr);
         }
       }
-      if (update_key == od->single_doc_key && (total_len || !vec))
+      if (update_key == od->single_doc_key && (total_len || f.allow_empty_doc || !vec)) {
         od->move_resident_alt = false;
+      }
     }
     if (cache_config_http_max_alts > 1 && write_vector->count() >= cache_config_http_max_alts && alternate_index < 0) {
       if (od->move_resident_alt && get_alternate_index(write_vector, od->single_doc_key) == 0)
@@ -926,6 +927,7 @@ Vol::agg_wrap()
   {
     Vol *vol = this;
     CACHE_INCREMENT_DYN_STAT(cache_directory_wrap_stat);
+    Note("Cache volume %d on disk '%s' wraps around", vol->cache_vol->vol_number, vol->hash_text.get());
   }
   periodic_scan();
 }
@@ -1018,7 +1020,7 @@ Lagain:
     int l       = round_to_approx_size(sizeof(Doc));
     agg_buf_pos = l;
     Doc *d      = (Doc *)agg_buffer;
-    memset(d, 0, sizeof(Doc));
+    memset(static_cast<void *>(d), 0, sizeof(Doc));
     d->magic        = DOC_MAGIC;
     d->len          = l;
     d->sync_serial  = header->sync_serial;
@@ -1072,11 +1074,11 @@ CacheVC::openWriteCloseDir(int /* event ATS_UNUSED */, Event * /* e ATS_UNUSED *
   }
   if (is_debug_tag_set("cache_update")) {
     if (f.update && closed > 0) {
-      if (!total_len && alternate_index != CACHE_ALT_REMOVED) {
+      if (!total_len && !f.allow_empty_doc && alternate_index != CACHE_ALT_REMOVED) {
         Debug("cache_update", "header only %d (%" PRIu64 ", %" PRIu64 ")", DIR_MASK_TAG(first_key.slice32(2)), update_key.b[0],
               update_key.b[1]);
 
-      } else if (total_len && alternate_index != CACHE_ALT_REMOVED) {
+      } else if ((total_len || f.allow_empty_doc) && alternate_index != CACHE_ALT_REMOVED) {
         Debug("cache_update", "header body, %d, (%" PRIu64 ", %" PRIu64 "), (%" PRIu64 ", %" PRIu64 ")",
               DIR_MASK_TAG(first_key.slice32(2)), update_key.b[0], update_key.b[1], earliest_key.b[0], earliest_key.b[1]);
       } else if (!total_len && alternate_index == CACHE_ALT_REMOVED) {

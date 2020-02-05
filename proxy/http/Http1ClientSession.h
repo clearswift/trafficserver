@@ -29,8 +29,7 @@
 
  ****************************************************************************/
 
-#ifndef _HTTP1_CLIENT_SESSION_H_
-#define _HTTP1_CLIENT_SESSION_H_
+#pragma once
 
 //#include "libts.h"
 #include "P_Net.h"
@@ -57,6 +56,7 @@ public:
   // Implement ProxyClientSession interface.
   virtual void destroy();
   virtual void free();
+  void release_transaction();
 
   virtual void
   start()
@@ -75,6 +75,13 @@ public:
   virtual void do_io_shutdown(ShutdownHowTo_t howto);
   virtual void reenable(VIO *vio);
 
+  bool
+  allow_half_open()
+  {
+    // Only allow half open connections if the not over TLS
+    return (client_vc && dynamic_cast<SSLNetVConnection *>(client_vc) == nullptr);
+  }
+
   void
   set_half_close_flag(bool flag)
   {
@@ -91,19 +98,6 @@ public:
   get_netvc() const
   {
     return client_vc;
-  }
-
-  virtual void
-  release_netvc()
-  {
-    // Make sure the vio's are also released to avoid
-    // later surprises in inactivity timeout
-    if (client_vc) {
-      client_vc->do_io_read(NULL, 0, NULL);
-      client_vc->do_io_write(NULL, 0, NULL);
-      client_vc->set_action(NULL);
-      client_vc = NULL;
-    }
   }
 
   int
@@ -213,6 +207,8 @@ private:
 
   HttpServerSession *bound_ss;
 
+  int released_transactions;
+
 public:
   // Link<Http1ClientSession> debug_link;
   LINK(Http1ClientSession, debug_link);
@@ -232,5 +228,3 @@ public:
 };
 
 extern ClassAllocator<Http1ClientSession> http1ClientSessionAllocator;
-
-#endif

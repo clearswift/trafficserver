@@ -21,8 +21,7 @@
   limitations under the License.
  */
 
-#ifndef __HTTP_H__
-#define __HTTP_H__
+#pragma once
 
 #include <assert.h>
 #include "ts/Arena.h"
@@ -445,6 +444,7 @@ void http_parser_clear(HTTPParser *parser);
 ParseResult http_parser_parse_req(HTTPParser *parser, HdrHeap *heap, HTTPHdrImpl *hh, const char **start, const char *end,
                                   bool must_copy_strings, bool eof, bool strict_uri_parsing);
 ParseResult validate_hdr_host(HTTPHdrImpl *hh);
+ParseResult validate_hdr_content_length(HdrHeap *heap, HTTPHdrImpl *hh);
 ParseResult http_parser_parse_resp(HTTPParser *parser, HdrHeap *heap, HTTPHdrImpl *hh, const char **start, const char *end,
                                    bool must_copy_strings, bool eof);
 
@@ -1606,5 +1606,3 @@ HTTPInfo::get_frag_offset_count()
 {
   return m_alt ? m_alt->m_frag_offset_count : 0;
 }
-
-#endif /* __HTTP_H__ */

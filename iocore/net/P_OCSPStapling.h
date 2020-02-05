@@ -19,20 +19,12 @@
   limitations under the License.
  */
 
-#ifndef __P_OCSPSTAPLING_H__
-#define __P_OCSPSTAPLING_H__
+#pragma once
 
 #include <openssl/ssl.h>
 
-// TODO: This should be moved to autoconf
-#ifdef sk_OPENSSL_STRING_pop
-#ifdef SSL_CTX_set_tlsext_status_cb
 #define HAVE_OPENSSL_OCSP_STAPLING 1
 void ssl_stapling_ex_init();
 bool ssl_stapling_init_cert(SSL_CTX *ctx, X509 *cert, const char *certname);
 void ocsp_update();
 int ssl_callback_ocsp_stapling(SSL *);
-#endif /* SSL_CTX_set_tlsext_status_cb */
-#endif /* sk_OPENSSL_STRING_pop */
-
-#endif /* __P_OCSPSTAPLING_H__ */

@@ -19,8 +19,7 @@
 //
 // Implement the classes for the various types of hash keys we support.
 //
-#ifndef __RULESET_H__
-#define __RULESET_H__ 1
+#pragma once
 
 #include <string>
 
@@ -43,7 +42,18 @@ public:
       _hook(TS_HTTP_READ_RESPONSE_HDR_HOOK),
       _ids(RSRC_NONE),
       _opermods(OPER_NONE),
-      _last(false){};
+      _last(false)
+  {
+    TSDebug(PLUGIN_NAME_DBG, "RuleSet CTOR");
+  }
+
+  ~RuleSet()
+  {
+    TSDebug(PLUGIN_NAME_DBG, "RulesSet DTOR");
+    delete next;
+    delete _cond;
+    delete _oper;
+  }
 
   // No reason to inline these
   void append(RuleSet *rule);
@@ -118,5 +128,3 @@ private:
   OperModifiers _opermods;
   bool _last;
 };
-
-#endif // __RULESET_H

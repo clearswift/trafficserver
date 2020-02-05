@@ -21,8 +21,7 @@
   limitations under the License.
  */
 
-#ifndef __P_UNIXNET_H__
-#define __P_UNIXNET_H__
+#pragma once
 
 #include "ts/ink_platform.h"
 
@@ -144,6 +143,7 @@ extern int http_accept_port_number;
 
 // also the 'throttle connect headroom'
 #define EMERGENCY_THROTTLE 16
+#define THROTTLE_AT_ONCE 5
 #define HYPER_EMERGENCY_THROTTLE 6
 
 #define NET_THROTTLE_ACCEPT_HEADROOM 1.1  // 10%
@@ -270,61 +270,27 @@ check_shedding_warning()
 }
 
 TS_INLINE bool
-emergency_throttle(ink_hrtime now)
-{
-  return (bool)(emergency_throttle_time > now);
-}
-
-TS_INLINE bool
-check_net_throttle(ThrottleType t, ink_hrtime now)
+check_net_throttle(ThrottleType t)
 {
   int connections = net_connections_to_throttle(t);
 
-  if (connections >= net_connections_throttle)
-    return true;
-
-  if (emergency_throttle(now))
+  if (net_connections_throttle != 0 && connections >= net_connections_throttle)
     return true;
 
   return false;
 }
 
 TS_INLINE void
-check_throttle_warning()
+check_throttle_warning(ThrottleType type)
 {
   ink_hrtime t = Thread::get_hrtime();
   if (t - last_throttle_warning > NET_THROTTLE_MESSAGE_EVERY) {
     last_throttle_warning = t;
-    RecSignalWarning(REC_SIGNAL_SYSTEM_ERROR, "too many connections, throttling");
+    int connections       = net_connections_to_throttle(type);
+    RecSignalWarning(REC_SIGNAL_SYSTEM_ERROR,
+                     "too many connections, throttling.  connection_type=%s, current_connections=%d, net_connections_throttle=%d",
+                     type == ACCEPT ? "ACCEPT" : "CONNECT", connections, net_connections_throttle);
   }
-}
-
-//
-// Emergency throttle when we are close to exhausting file descriptors.
-// Block all accepts or connects for N seconds where N
-// is the amount into the emergency fd stack squared
-// (e.g. on the last file descriptor we have 14 * 14 = 196 seconds
-// of emergency throttle).
-//
-// Hyper Emergency throttle when we are very close to exhausting file
-// descriptors.  Close the connection immediately, the upper levels
-// will recover.
-//
-TS_INLINE bool
-check_emergency_throttle(Connection &con)
-{
-  int fd        = con.fd;
-  int emergency = fds_limit - EMERGENCY_THROTTLE;
-  if (fd > emergency) {
-    int over                = fd - emergency;
-    emergency_throttle_time = Thread::get_hrtime() + (over * over) * HRTIME_SECOND;
-    RecSignalWarning(REC_SIGNAL_SYSTEM_ERROR, "too many open file descriptors, emergency throttling");
-    int hyper_emergency = fds_limit - HYPER_EMERGENCY_THROTTLE;
-    if (fd > hyper_emergency)
-      con.close();
-    return true;
-  }
-  return false;
 }
 
 TS_INLINE int
@@ -335,9 +301,11 @@ change_net_connections_throttle(const char *token, RecDataT data_type, RecData v
   (void)value;
   (void)data;
   int throttle = fds_limit - THROTTLE_FD_HEADROOM;
-  if (fds_throttle < 0)
+  if (fds_throttle == 0) {
+    net_connections_throttle = fds_throttle;
+  } else if (fds_throttle < 0) {
     net_connections_throttle = throttle;
-  else {
+  } else {
     net_connections_throttle = fds_throttle;
     if (net_connections_throttle > throttle)
       net_connections_throttle = throttle;
@@ -666,5 +634,3 @@ EventIO::stop()
   }
   return 0;
 }
-
-#endif

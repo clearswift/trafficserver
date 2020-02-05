@@ -20,8 +20,7 @@
   See the License for the specific language governing permissions and
   limitations under the License.
  */
-#ifndef LOG_HOST_H
-#define LOG_HOST_H
+#pragma once
 
 class LogSock;
 class LogBuffer;
@@ -53,7 +52,7 @@ public:
   // preprocess the given buffer data before sent to target host
   // and try to delete it when its reference become zero.
   //
-  int preproc_and_try_delete(LogBuffer *lb);
+  bool preproc_and_try_delete(LogBuffer *lb);
 
   //
   // write the given buffer data to orphan file and
@@ -170,5 +169,3 @@ private:
   LogHostList(const LogHostList &);
   LogHostList &operator=(const LogHostList &);
 };
-
-#endif

@@ -1058,11 +1058,27 @@ LogAccessHttp::marshal_proxy_req_server_name(char *buf)
 int
 LogAccessHttp::marshal_proxy_req_server_ip(char *buf)
 {
-  return marshal_ip(buf, m_http_sm->t_state.current.server != nullptr ? &m_http_sm->t_state.current.server->dst_addr.sa : nullptr);
+  return marshal_ip(buf, m_http_sm->t_state.current.server != nullptr ? &m_http_sm->t_state.current.server->src_addr.sa : nullptr);
 }
 
 int
 LogAccessHttp::marshal_proxy_req_server_port(char *buf)
+{
+  if (buf) {
+    uint16_t port = ntohs(m_http_sm->t_state.current.server != nullptr ? m_http_sm->t_state.current.server->src_addr.port() : 0);
+    marshal_int(buf, port);
+  }
+  return INK_MIN_ALIGN;
+}
+
+int
+LogAccessHttp::marshal_next_hop_ip(char *buf)
+{
+  return marshal_ip(buf, m_http_sm->t_state.current.server != nullptr ? &m_http_sm->t_state.current.server->dst_addr.sa : nullptr);
+}
+
+int
+LogAccessHttp::marshal_next_hop_port(char *buf)
 {
   if (buf) {
     uint16_t port = ntohs(m_http_sm->t_state.current.server != nullptr ? m_http_sm->t_state.current.server->dst_addr.port() : 0);
@@ -1126,21 +1142,18 @@ LogAccessHttp::marshal_server_host_ip(char *buf)
 int
 LogAccessHttp::marshal_server_host_name(char *buf)
 {
-  const char *str = nullptr;
-  int padded_len  = INK_MIN_ALIGN;
-  int actual_len  = 0;
+  char *str = nullptr;
+  int len   = INK_MIN_ALIGN;
 
-  if (m_client_request) {
-    str = m_client_request->host_get(&actual_len);
-
-    if (str) {
-      padded_len = round_strlen(actual_len + 1); // +1 for trailing 0
-    }
+  if (m_http_sm->t_state.current.server) {
+    str = m_http_sm->t_state.current.server->name;
+    len = LogAccess::strlen(str);
   }
+
   if (buf) {
-    marshal_mem(buf, str, actual_len, padded_len);
+    marshal_str(buf, str, len);
   }
-  return padded_len;
+  return len;
 }
 
 /*-------------------------------------------------------------------------
@@ -1473,6 +1486,47 @@ LogAccessHttp::marshal_file_size(char *buf)
   }
   // Else, we don't set the value at all (so, -)
 
+  return INK_MIN_ALIGN;
+}
+
+/*-------------------------------------------------------------------------
+  -------------------------------------------------------------------------*/
+
+int
+LogAccessHttp::marshal_client_http_connection_id(char *buf)
+{
+  if (buf) {
+    int64_t id = 0;
+    if (m_http_sm) {
+      auto p = m_http_sm->ua_session;
+      if (p) {
+        auto p2 = p->get_parent();
+        if (p2) {
+          id = p2->connection_id();
+        }
+      }
+    }
+    marshal_int(buf, id);
+  }
+  return INK_MIN_ALIGN;
+}
+
+/*-------------------------------------------------------------------------
+  -------------------------------------------------------------------------*/
+
+int
+LogAccessHttp::marshal_client_http_transaction_id(char *buf)
+{
+  if (buf) {
+    int64_t id = 0;
+    if (m_http_sm) {
+      auto p = m_http_sm->ua_session;
+      if (p) {
+        id = p->get_transaction_id();
+      }
+    }
+    marshal_int(buf, id);
+  }
   return INK_MIN_ALIGN;
 }
 

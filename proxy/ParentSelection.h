@@ -28,8 +28,7 @@
  *
  ****************************************************************************/
 
-#ifndef _PARENT_SELECTION_H_
-#define _PARENT_SELECTION_H_
+#pragma once
 
 #include "Main.h"
 #include "ProxyConfig.h"
@@ -329,7 +328,7 @@ class ParentConfigParams : public ConfigInfo
 {
 public:
   explicit ParentConfigParams(P_table *_parent_table);
-  ~ParentConfigParams(){};
+  ~ParentConfigParams();
 
   bool apiParentExists(HttpRequestData *rdata);
   void findParent(HttpRequestData *rdata, ParentResult *result, unsigned int fail_threshold, unsigned int retry_time);
@@ -443,5 +442,3 @@ struct SocksServerConfig {
 
   static int m_id;
 };
-
-#endif

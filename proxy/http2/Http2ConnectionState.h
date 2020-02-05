@@ -21,8 +21,7 @@
   limitations under the License.
  */
 
-#ifndef __HTTP2_CONNECTION_STATE_H__
-#define __HTTP2_CONNECTION_STATE_H__
+#pragma once
 
 #include "HTTP2.h"
 #include "HPACK.h"
@@ -38,6 +37,8 @@ enum class Http2SendDataFrameResult {
   ERROR,
   DONE,
 };
+
+enum Http2ShutdownState { HTTP2_SHUTDOWN_NONE, HTTP2_SHUTDOWN_NOT_INITIATED, HTTP2_SHUTDOWN_INITIATED, HTTP2_SHUTDOWN_IN_PROGRESS };
 
 class Http2ConnectionSettings
 {
@@ -115,8 +116,6 @@ public:
     : Continuation(NULL),
       ua_session(NULL),
       dependency_tree(NULL),
-      client_rwnd(HTTP2_INITIAL_WINDOW_SIZE),
-      server_rwnd(Http2::initial_window_size),
       stream_list(),
       latest_streamid_in(0),
       latest_streamid_out(0),
@@ -124,14 +123,20 @@ public:
       client_streams_in_count(0),
       client_streams_out_count(0),
       total_client_streams_count(0),
+      stream_error_count(0),
+      _client_rwnd(HTTP2_INITIAL_WINDOW_SIZE),
+      _server_rwnd(Http2::initial_window_size),
       continued_stream_id(0),
       _scheduled(false),
       fini_received(false),
-      recursion(0)
+      recursion(0),
+      fini_event(nullptr)
   {
     SET_HANDLER(&Http2ConnectionState::main_event_handler);
   }
 
+  ProxyError rx_error_code;
+  ProxyError tx_error_code;
   Http2ClientSession *ua_session;
   HpackHandle *local_hpack_handle;
   HpackHandle *remote_hpack_handle;
@@ -146,11 +151,7 @@ public:
   {
     local_hpack_handle  = new HpackHandle(HTTP2_HEADER_TABLE_SIZE);
     remote_hpack_handle = new HpackHandle(HTTP2_HEADER_TABLE_SIZE);
-
-    continued_buffer.iov_base = NULL;
-    continued_buffer.iov_len  = 0;
-
-    dependency_tree = new DependencyTree(Http2::max_concurrent_streams_in);
+    dependency_tree     = new DependencyTree(Http2::max_concurrent_streams_in);
   }
 
   void
@@ -158,14 +159,18 @@ public:
   {
     cleanup_streams();
 
-    mutex = NULL; // magic happens - assigning to NULL frees the ProxyMutex
     delete local_hpack_handle;
+    local_hpack_handle = nullptr;
     delete remote_hpack_handle;
-
-    ats_free(continued_buffer.iov_base);
-
+    remote_hpack_handle = nullptr;
     delete dependency_tree;
+    dependency_tree  = nullptr;
     this->ua_session = nullptr;
+
+    if (fini_event) {
+      fini_event->cancel();
+    }
+    mutex = NULL; // magic happens - assigning to NULL frees the ProxyMutex
   }
 
   // Event handlers
@@ -229,8 +234,22 @@ public:
     return client_streams_in_count;
   }
 
-  // Connection level window size
-  ssize_t client_rwnd, server_rwnd;
+  double
+  get_stream_error_rate() const
+  {
+    int total = get_stream_requests();
+    if (total > 0) {
+      return (double)stream_error_count / (double)total;
+    } else {
+      return 0;
+    }
+  }
+
+  Http2ErrorCode
+  get_shutdown_reason() const
+  {
+    return shutdown_reason;
+  }
 
   // HTTP/2 frame sender
   void schedule_stream(Http2Stream *stream);
@@ -267,6 +286,22 @@ public:
     }
   }
 
+  void increment_received_settings_count(uint32_t count);
+  uint32_t get_received_settings_count();
+  void increment_received_settings_frame_count();
+  uint32_t get_received_settings_frame_count();
+  void increment_received_ping_frame_count();
+  uint32_t get_received_ping_frame_count();
+  void increment_received_priority_frame_count();
+  uint32_t get_received_priority_frame_count();
+
+  ssize_t client_rwnd() const;
+  Http2ErrorCode increment_client_rwnd(size_t amount);
+  Http2ErrorCode decrement_client_rwnd(size_t amount);
+  ssize_t server_rwnd() const;
+  Http2ErrorCode increment_server_rwnd(size_t amount);
+  Http2ErrorCode decrement_server_rwnd(size_t amount);
+
 private:
   Http2ConnectionState(const Http2ConnectionState &);            // noncopyable
   Http2ConnectionState &operator=(const Http2ConnectionState &); // noncopyable
@@ -293,6 +328,29 @@ private:
   // Counter for current active streams and streams in the process of shutting down
   uint32_t total_client_streams_count;
 
+  // Counter for stream errors ATS sent
+  uint32_t stream_error_count;
+
+  // Connection level window size
+  ssize_t _client_rwnd;
+  ssize_t _server_rwnd;
+
+  std::vector<size_t> _recent_rwnd_increment = {SIZE_MAX, SIZE_MAX, SIZE_MAX, SIZE_MAX, SIZE_MAX};
+  int _recent_rwnd_increment_index           = 0;
+
+  // Counter for settings received within last 60 seconds
+  // Each item holds a count for 30 seconds.
+  uint16_t settings_count[2]            = {0};
+  ink_hrtime settings_count_last_update = 0;
+  // Counters for frames received within last 60 seconds
+  // Each item in an array holds a count for 30 seconds.
+  uint16_t settings_frame_count[2]            = {0};
+  ink_hrtime settings_frame_count_last_update = 0;
+  uint16_t ping_frame_count[2]                = {0};
+  ink_hrtime ping_frame_count_last_update     = 0;
+  uint16_t priority_frame_count[2]            = {0};
+  ink_hrtime priority_frame_count_last_update = 0;
+
   // NOTE: Id of stream which MUST receive CONTINUATION frame.
   //   - [RFC 7540] 6.2 HEADERS
   //     "A HEADERS frame without the END_HEADERS flag set MUST be followed by a
@@ -301,10 +359,11 @@ private:
   //     "If the END_HEADERS bit is not set, this frame MUST be followed by
   //     another CONTINUATION frame."
   Http2StreamId continued_stream_id;
-  IOVec continued_buffer;
   bool _scheduled;
   bool fini_received;
   int recursion;
+  Http2ShutdownState shutdown_state = HTTP2_SHUTDOWN_NONE;
+  Http2ErrorCode shutdown_reason    = Http2ErrorCode::HTTP2_ERROR_MAX;
+  Event *shutdown_cont_event        = nullptr;
+  Event *fini_event;
 };
-
-#endif // __HTTP2_CONNECTION_STATE_H__

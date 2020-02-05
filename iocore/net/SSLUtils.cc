@@ -539,9 +539,13 @@ ssl_context_enable_dhe(const char *dhparams_file, SSL_CTX *ctx)
   return ctx;
 }
 
+// SSL_CTX_set_ecdh_auto() is removed by OpenSSL v1.1.0 and ECDH is enabled in default.
+// TODO: remove this function when we drop support of OpenSSL v1.0.2* and lower.
 static SSL_CTX *
 ssl_context_enable_ecdh(SSL_CTX *ctx)
 {
+#if OPENSSL_VERSION_NUMBER < 0x10100000
+
 #if TS_USE_TLS_ECKEY
 
 #if defined(SSL_CTRL_SET_ECDH_AUTO)
@@ -553,6 +557,7 @@ ssl_context_enable_ecdh(SSL_CTX *ctx)
     SSL_CTX_set_tmp_ecdh(ctx, ecdh);
     EC_KEY_free(ecdh);
   }
+#endif
 #endif
 #endif
 
@@ -994,6 +999,14 @@ SSLInitializeStatistics()
   RecRegisterRawStat(ssl_rsb, RECT_PROCESS, "proxy.process.ssl.ssl_session_cache_lock_contention", RECD_COUNTER, RECP_PERSISTENT,
                      (int)ssl_session_cache_lock_contention, RecRawStatSyncCount);
 
+  /* Track dynamic record size */
+  RecRegisterRawStat(ssl_rsb, RECT_PROCESS, "proxy.process.ssl.default_record_size_count", RECD_COUNTER, RECP_PERSISTENT,
+                     (int)ssl_total_dyn_def_tls_record_count, RecRawStatSyncSum);
+  RecRegisterRawStat(ssl_rsb, RECT_PROCESS, "proxy.process.ssl.max_record_size_count", RECD_COUNTER, RECP_PERSISTENT,
+                     (int)ssl_total_dyn_max_tls_record_count, RecRawStatSyncSum);
+  RecRegisterRawStat(ssl_rsb, RECT_PROCESS, "proxy.process.ssl.redo_record_size_count", RECD_COUNTER, RECP_PERSISTENT,
+                     (int)ssl_total_dyn_redo_tls_record_count, RecRawStatSyncCount);
+
   /* error stats */
   RecRegisterRawStat(ssl_rsb, RECT_PROCESS, "proxy.process.ssl.ssl_error_want_write", RECD_COUNTER, RECP_PERSISTENT,
                      (int)ssl_error_want_write, RecRawStatSyncCount);
@@ -1264,12 +1277,12 @@ SSLDefaultServerContext()
 }
 
 static bool
-SSLPrivateKeyHandler(SSL_CTX *ctx, const SSLConfigParams *params, const ats_scoped_str &completeServerCertPath, const char *keyPath)
+SSLPrivateKeyHandler(SSL_CTX *ctx, const SSLConfigParams *params, const std::string &completeServerCertPath, const char *keyPath)
 {
   if (!keyPath) {
     // assume private key is contained in cert obtained from multicert file.
-    if (!SSL_CTX_use_PrivateKey_file(ctx, completeServerCertPath, SSL_FILETYPE_PEM)) {
-      SSLError("failed to load server private key from %s", (const char *)completeServerCertPath);
+    if (!SSL_CTX_use_PrivateKey_file(ctx, completeServerCertPath.c_str(), SSL_FILETYPE_PEM)) {
+      SSLError("failed to load server private key from %s", completeServerCertPath.c_str());
       return false;
     }
   } else if (params->serverKeyPathOnly != nullptr) {
@@ -1474,7 +1487,6 @@ SSL_CTX *
 SSLInitServerContext(const SSLConfigParams *params, const ssl_user_config *sslMultCertSettings, Vec<X509 *> &certList)
 {
   int server_verify_client;
-  ats_scoped_str completeServerCertPath;
   SSL_CTX *ctx                 = SSLDefaultServerContext();
   EVP_MD_CTX *digest           = EVP_MD_CTX_new();
   STACK_OF(X509_NAME) *ca_list = nullptr;
@@ -1578,24 +1590,24 @@ SSLInitServerContext(const SSLConfigParams *params, const ssl_user_config *sslMu
       }
 
       for (const char *certname = cert_tok.getNext(); certname; certname = cert_tok.getNext()) {
-        completeServerCertPath = Layout::relative_to(params->serverCertPathOnly, certname);
-        scoped_BIO bio(BIO_new_file(completeServerCertPath, "r"));
+        std::string completeServerCertPath = Layout::relative_to(params->serverCertPathOnly, certname);
+        scoped_BIO bio(BIO_new_file(completeServerCertPath.c_str(), "r"));
         X509 *cert = nullptr;
         if (bio) {
           cert = PEM_read_bio_X509(bio.get(), nullptr, nullptr, nullptr);
         }
         if (!bio || !cert) {
-          SSLError("failed to load certificate chain from %s", (const char *)completeServerCertPath);
+          SSLError("failed to load certificate chain from %s", completeServerCertPath.c_str());
           goto fail;
         }
         if (!SSL_CTX_use_certificate(ctx, cert)) {
-          SSLError("Failed to assign cert from %s to SSL_CTX", (const char *)completeServerCertPath);
+          SSLError("Failed to assign cert from %s to SSL_CTX", completeServerCertPath.c_str());
           X509_free(cert);
           goto fail;
         }
         certList.push_back(cert);
         if (SSLConfigParams::load_ssl_file_cb) {
-          SSLConfigParams::load_ssl_file_cb(completeServerCertPath, CONFIG_FLAG_UNVERSIONED);
+          SSLConfigParams::load_ssl_file_cb(completeServerCertPath.c_str(), CONFIG_FLAG_UNVERSIONED);
         }
         // Load up any additional chain certificates
         SSL_CTX_add_extra_chain_cert_bio(ctx, bio);

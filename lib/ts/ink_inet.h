@@ -22,8 +22,7 @@
 
  */
 
-#if !defined(_ink_inet_h_)
-#define _ink_inet_h_
+#pragma once
 
 #include <netinet/in.h>
 #include <netdb.h>
@@ -659,7 +658,7 @@ ats_is_ip_loopback(IpEndpoint const *ip)
 inline bool
 ats_is_ip_multicast(sockaddr const *ip)
 {
-  return ip && ((AF_INET == ip->sa_family && 0xe == *ats_ip_addr8_cast(ip)) ||
+  return ip && ((AF_INET == ip->sa_family && 0xe == (ats_ip_addr8_cast(ip)[0] >> 4)) ||
                 (AF_INET6 == ip->sa_family && IN6_IS_ADDR_MULTICAST(&ats_ip6_addr_cast(ip))));
 }
 /// Check for multicast.
@@ -760,10 +759,12 @@ ats_ip_copy(sockaddr *dst,      ///< Destination object.
     }
   }
   if (n) {
-    memcpy(dst, src, n);
+    if (src != dst) {
+      memcpy(dst, src, n);
 #if HAVE_STRUCT_SOCKADDR_SA_LEN
-    dst->sa_len = n;
+      dst->sa_len = n;
 #endif
+    }
   } else {
     ats_ip_invalidate(dst);
   }
@@ -1581,5 +1582,3 @@ IpEndpoint::setToLoopback(int family)
   }
   return *this;
 }
-
-#endif // _ink_inet.h

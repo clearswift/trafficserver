@@ -32,8 +32,8 @@
 # Version number is calculated as MAJOR * 1000000 + MINOR * 1000 + MICRO
 # Version string is in the form of MAJOR.MINOR.MICRO[sufix]
 #
-m4_define([TS_VERSION_S],[7.1.2])
-m4_define([TS_VERSION_N],[7001002])
+m4_define([TS_VERSION_S],[7.1.8])
+m4_define([TS_VERSION_N],[7001008])
 
 AC_INIT([Apache Traffic Server], TS_VERSION_S(), [dev@trafficserver.apache.org], [trafficserver],[http://trafficserver.apache.org])
 AC_PREREQ([2.59])
@@ -205,6 +205,15 @@ AC_ARG_ENABLE([asan],
 )
 AC_MSG_RESULT([$enable_asan])
 
+# Enable LSAN in stand-alone mode for the builds
+AC_MSG_CHECKING([whether to enable lsan])
+AC_ARG_ENABLE([lsan],
+  [AS_HELP_STRING([--enable-lsan],[enable stand-alone Leak Sanitizer])],
+  [],
+  [enable_lsan=no]
+)
+AC_MSG_RESULT([$enable_lsan])
+
 # Enable TSAN for the builds
 AC_MSG_CHECKING([whether to enable tsan])
 AC_ARG_ENABLE([tsan],
@@ -275,7 +284,7 @@ AM_CONDITIONAL([BUILD_TESTS], [test 0 -ne $has_tests])
 AC_MSG_CHECKING([whether to build documentation])
 AC_ARG_ENABLE([docs],
   [AS_HELP_STRING([--enable-docs],[enable documentation building])],
-  [],
+  [enable_doc_build=yes],
   [enable_doc_build=no]
 )
 AC_MSG_RESULT([$enable_doc_build])
@@ -794,7 +803,8 @@ case $host_os_def in
       # -Wall is overzealous for us, so need to turn this off for now:
       #
       #  #873 is "has no corresponding operator delete"
-      common_opt="-pipe -Wall -wd873"
+      #  #279 is "controlling expression is constant" (which is e.g. TSReleaseAssert(!"Unexpected Event");
+      common_opt="-pipe -Wall -wd873 -wd279"
       debug_opt="-ggdb3 $common_opt"
       release_opt="-g $common_opt $optimization_flags -axsse4.2 -fno-strict-aliasing"
       cxx_opt="-Wno-invalid-offsetof"
@@ -811,7 +821,7 @@ case $host_os_def in
     AS_IF([test "x$ax_cv_c_compiler_vendor" = "xgnu"], [
       # This is useful for finding odd conversions
       #    common_opt="-pipe -Wall -Wconversion -Wno-sign-conversion -Wno-format-truncation"
-      common_opt="-pipe -Wall -Wextra -Wno-ignored-qualifiers -Wno-unused-parameter -Wno-format-truncation"
+      common_opt="-pipe -Wall -Wextra -Wno-ignored-qualifiers -Wno-unused-parameter -Wno-format-truncation -Wno-cast-function-type -Wno-stringop-overflow"
       debug_opt="-ggdb3 $common_opt"
       release_opt="-g $common_opt $optimizing_flags -feliminate-unused-debug-symbols -fno-strict-aliasing"
       cxx_opt="-Wno-invalid-offsetof"
@@ -942,6 +952,15 @@ if test "x${enable_asan}" = "xyes"; then
   fi
   TS_ADDTO(AM_CFLAGS, [-fno-omit-frame-pointer -fsanitize=address])
   TS_ADDTO(AM_CXXFLAGS, [-fno-omit-frame-pointer -fsanitize=address])
+fi
+
+# Flags for LSAN stand-alone mode
+if test "x${enable_lsan}" = "xyes"; then
+  if test "x${enable_asan}" = "xyes"; then
+    AC_ERROR([ASAN already specified, --enable-lsan is meant only for lsan stand-alone mode])
+  fi
+  TS_ADDTO(AM_CFLAGS, [-fno-omit-frame-pointer -fsanitize=leak])
+  TS_ADDTO(AM_CXXFLAGS, [-fno-omit-frame-pointer -fsanitize=leak])
 fi
 
 # Flags for TSAN
@@ -1187,7 +1206,7 @@ if test "x${TCL_INCLUDE_SPEC}" != "x-I/usr/include"; then
    TS_ADDTO(AM_CPPFLAGS, [$TCL_INCLUDE_SPEC])
 fi
 
-AC_CHECK_FUNCS([clock_gettime kqueue epoll_ctl posix_memalign posix_fadvise posix_madvise posix_fallocate inotify_init])
+AC_CHECK_FUNCS([clock_gettime kqueue epoll_ctl posix_fadvise posix_madvise posix_fallocate inotify_init])
 AC_CHECK_FUNCS([lrand48_r srand48_r port_create strlcpy strlcat sysconf sysctlbyname getpagesize])
 AC_CHECK_FUNCS([getreuid getresuid getresgid setreuid setresuid getpeereid getpeerucred])
 AC_CHECK_FUNCS([strsignal psignal psiginfo accept4])
@@ -1220,11 +1239,8 @@ if test "x${enable_pcre}" != "xyes"; then
   AC_MSG_ERROR([Cannot find pcre library. Configure --with-pcre=DIR])
 fi
 
-# Check Brotli
-AC_CHECK_HEADERS([brotli/encode.h], [has_brotli=1],[has_brotli=0])
-AC_CHECK_LIB([brotlienc],[BrotliEncoderCreateInstance],[AC_SUBST([LIB_BROTLIENC],["-lbrotlienc"])],[has_brotli=0])
-AC_SUBST(has_brotli)
-AM_CONDITIONAL([HAS_BROTLI], [ test "x${has_brotli}" = "x1" ])
+# Check for optional brotli library
+TS_CHECK_BROTLI
 
 # Check for backtrace() support
 has_backtrace=0
@@ -1877,6 +1893,12 @@ AS_IF([test "x$enable_experimental_plugins" = "xyes"],
 AM_CONDITIONAL([BUILD_REMAP_STATS_PLUGIN],
   [ test "x$enable_experimental_plugins" = "xyes" -a "x$ac_cv_header_search_h" = "xyes" -a "x$ac_cv_type_struct_hsearch_data" = "xyes" -a "x$ac_cv_func_hcreate_r" = "xyes" -a "x$ac_cv_func_hsearch_r" = "xyes" ])
 
+# Build the cookie_remap plugin only if we have yaml-cpp
+#
+TS_CHECK_YAML_CPP
+AM_CONDITIONAL([BUILD_COOKIE_REMAP_PLUGIN],
+  [ test "x$enable_experimental_plugins" = "xyes" -a "x$has_yaml_cpp" != "xno" ])
+
 #
 # use modular IOCORE
 #
@@ -1993,6 +2015,7 @@ AC_MSG_NOTICE([Build option summary:
     CC:                 $CC
     CXX:                $CXX
     CPP:                $CPP
+    CPPFLAGS:           $CPPFLAGS
     AM@&t@_CFLAGS:          $AM_CFLAGS
     AM@&t@_CXXFLAGS:        $AM_CXXFLAGS
     AM@&t@_CPPFLAGS:        $AM_CPPFLAGS
@@ -2004,6 +2027,6 @@ AC_MSG_NOTICE([Build option summary:
     OPENSSL_LDFLAGS:    $OPENSSL_LDFLAGS
     OPENSSL_INCLUDES:   $OPENSSL_INCLUDES
     LUAJIT_CFLAGS:      $LUAJIT_CFLAGS
-    LUAJIT_CPPFLAGS:	$LUAJIT_CPPFLAGS
+    LUAJIT_CPPFLAGS:    $LUAJIT_CPPFLAGS
     LUAJIT_LDFLAGS:     $LUAJIT_LDFLAGS
 ])

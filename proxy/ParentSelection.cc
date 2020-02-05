@@ -89,6 +89,15 @@ ParentConfigParams::ParentConfigParams(P_table *_parent_table) : parent_table(_p
   ats_free(default_val);
 }
 
+ParentConfigParams::~ParentConfigParams()
+{
+  if (parent_table) {
+    Debug("parent_select", "~ParentConfigParams(): releasing parent_table %p", parent_table);
+  }
+  delete parent_table;
+  delete DefaultParent;
+}
+
 bool
 ParentConfigParams::apiParentExists(HttpRequestData *rdata)
 {
@@ -466,8 +475,13 @@ ParentRecord::ProcessParents(char *val, bool isPrimary)
   return nullptr;
 
 MERROR:
-  ats_free(parents);
-  parents = nullptr;
+  if (isPrimary) {
+    ats_free(parents);
+    parents = nullptr;
+  } else {
+    ats_free(secondary_parents);
+    secondary_parents = nullptr;
+  }
 
   return errPtr;
 }
@@ -926,7 +940,6 @@ EXCLUSIVE_REGRESSION_TEST(PARENTSELECTION)(RegressionTest * /* t ATS_UNUSED */, 
 
 #define REBUILD                                                                                                            \
   do {                                                                                                                     \
-    delete ParentTable;                                                                                                    \
     delete params;                                                                                                         \
     ParentTable = new P_table("", "ParentSelection Unit Test Table", &http_dest_tags,                                      \
                               ALLOW_HOST_TABLE | ALLOW_REGEX_TABLE | ALLOW_URL_TABLE | ALLOW_IP_TABLE | DONT_BUILD_TABLE); \

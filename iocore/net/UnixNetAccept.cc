@@ -229,7 +229,6 @@ NetAccept::do_blocking_accept(EThread *t)
   // added by YTS Team, yamsat
   do {
     ink_hrtime now = Thread::get_hrtime();
-
     if ((res = server.accept(&con)) < 0) {
       int seriousness = accept_error_seriousness(res);
       if (seriousness >= 0) { // not so bad
@@ -245,21 +244,13 @@ NetAccept::do_blocking_accept(EThread *t)
       }
       return -1;
     }
-
-    // Throttle accepts
-    if (!opt.backdoor && (check_net_throttle(ACCEPT, now) || net_memory_throttle)) {
-      Debug("net_accept", "Too many connections or too much memory used, throttling");
-      check_throttle_warning();
+    // check for throttle
+    if (!opt.backdoor && check_net_throttle(ACCEPT)) {
+      check_throttle_warning(ACCEPT);
+      // close the connection as we are in throttle state
       con.close();
+      NET_SUM_DYN_STAT(net_connections_throttled_in_stat, 1);
       continue;
-    }
-
-    // The con.fd may exceed the limitation of check_net_throttle() because we do blocking accept here.
-    if (check_emergency_throttle(con)) {
-      // The `con' could be closed if there is hyper emergency
-      if (con.fd == NO_FD) {
-        return 0;
-      }
     }
 
     // Use 'nullptr' to Bypass thread allocator
@@ -346,7 +337,7 @@ NetAccept::acceptFastEvent(int event, void *ep)
   int loop               = accept_till_done;
 
   do {
-    if (!opt.backdoor && check_net_throttle(ACCEPT, Thread::get_hrtime())) {
+    if (!opt.backdoor && check_net_throttle(ACCEPT)) {
       ifd = NO_FD;
       return EVENT_CONT;
     }

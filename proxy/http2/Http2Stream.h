@@ -21,8 +21,7 @@
   limitations under the License.
  */
 
-#ifndef __HTTP2_STREAM_H__
-#define __HTTP2_STREAM_H__
+#pragma once
 
 #include "HTTP2.h"
 #include "../ProxyClientTransaction.h"
@@ -40,9 +39,7 @@ class Http2Stream : public ProxyClientTransaction
 public:
   typedef ProxyClientTransaction super; ///< Parent type.
   Http2Stream(Http2StreamId sid = 0, ssize_t initial_rwnd = Http2::initial_window_size)
-    : client_rwnd(initial_rwnd),
-      server_rwnd(Http2::initial_window_size),
-      header_blocks(NULL),
+    : header_blocks(NULL),
       header_blocks_length(0),
       request_header_length(0),
       recv_end_stream(false),
@@ -59,6 +56,8 @@ public:
       _thread(NULL),
       _id(sid),
       _state(Http2StreamState::HTTP2_STREAM_STATE_IDLE),
+      _client_rwnd(initial_rwnd),
+      _server_rwnd(Http2::initial_window_size),
       cross_thread_event(NULL),
       active_timeout(0),
       active_event(NULL),
@@ -74,10 +73,10 @@ public:
   void
   init(Http2StreamId sid, ssize_t initial_rwnd)
   {
-    _id               = sid;
-    _start_time       = Thread::get_hrtime();
-    _thread           = this_ethread();
-    this->client_rwnd = initial_rwnd;
+    _id                = sid;
+    _start_time        = Thread::get_hrtime();
+    _thread            = this_ethread();
+    this->_client_rwnd = initial_rwnd;
     HTTP2_INCREMENT_THREAD_DYN_STAT(HTTP2_STAT_CURRENT_CLIENT_STREAM_COUNT, _thread);
     HTTP2_INCREMENT_THREAD_DYN_STAT(HTTP2_STAT_TOTAL_CLIENT_STREAM_COUNT, _thread);
     sm_reader = request_reader = request_buffer.alloc_reader();
@@ -90,7 +89,7 @@ public:
   ~Http2Stream() { this->destroy(); }
   int main_event_handler(int event, void *edata);
 
-  void destroy();
+  void destroy() override;
 
   bool
   is_body_done() const
@@ -102,6 +101,11 @@ public:
   mark_body_done()
   {
     body_done = true;
+    if (response_is_chunked()) {
+      ink_assert(chunked_handler.state == ChunkedHandler::CHUNK_READ_DONE ||
+                 chunked_handler.state == ChunkedHandler::CHUNK_READ_ERROR);
+      this->write_vio.nbytes = response_header.length_get() + chunked_handler.dechunked_size;
+    }
   }
 
   void
@@ -113,6 +117,12 @@ public:
 
   Http2StreamId
   get_id() const
+  {
+    return _id;
+  }
+
+  int
+  get_transaction_id() const override
   {
     return _id;
   }
@@ -134,7 +144,7 @@ public:
   void
   update_initial_rwnd(Http2WindowSize new_size)
   {
-    client_rwnd = new_size;
+    this->_client_rwnd = new_size;
   }
 
   bool
@@ -165,21 +175,28 @@ public:
 
   Http2ErrorCode decode_header_blocks(HpackHandle &hpack_handle, uint32_t maximum_table_size);
   void send_request(Http2ConnectionState &cstate);
-  VIO *do_io_read(Continuation *c, int64_t nbytes, MIOBuffer *buf);
-  VIO *do_io_write(Continuation *c, int64_t nbytes, IOBufferReader *abuffer, bool owner = false);
-  void do_io_close(int lerrno = -1);
+  VIO *do_io_read(Continuation *c, int64_t nbytes, MIOBuffer *buf) override;
+  VIO *do_io_write(Continuation *c, int64_t nbytes, IOBufferReader *abuffer, bool owner = false) override;
+  void do_io_close(int lerrno = -1) override;
   void initiating_close();
   void terminate_if_possible();
-  void do_io_shutdown(ShutdownHowTo_t) {}
+  void do_io_shutdown(ShutdownHowTo_t) override {}
   void update_read_request(int64_t read_len, bool send_update);
-  bool update_write_request(IOBufferReader *buf_reader, int64_t write_len, bool send_update);
-  void reenable(VIO *vio);
-  virtual void transaction_done();
-  void send_response_body();
+  void update_write_request(IOBufferReader *buf_reader, int64_t write_len, bool send_update);
+  void signal_write_event(bool call_update);
+  void reenable(VIO *vio) override;
+  virtual void transaction_done() override;
+
+  void restart_sending();
   void push_promise(URL &url, const MIMEField *accept_encoding);
 
   // Stream level window size
-  ssize_t client_rwnd, server_rwnd;
+  ssize_t client_rwnd() const;
+  Http2ErrorCode increment_client_rwnd(size_t amount);
+  Http2ErrorCode decrement_client_rwnd(size_t amount);
+  ssize_t server_rwnd() const;
+  Http2ErrorCode increment_server_rwnd(size_t amount);
+  Http2ErrorCode decrement_server_rwnd(size_t amount);
 
   uint8_t *header_blocks;
   uint32_t header_blocks_length;  // total length of header blocks (not include
@@ -213,17 +230,17 @@ public:
     return chunked;
   }
 
-  void release(IOBufferReader *r);
+  void release(IOBufferReader *r) override;
 
   virtual bool
-  allow_half_open() const
+  allow_half_open() const override
   {
     return false;
   }
 
-  virtual void set_active_timeout(ink_hrtime timeout_in);
-  virtual void set_inactivity_timeout(ink_hrtime timeout_in);
-  virtual void cancel_inactivity_timeout();
+  virtual void set_active_timeout(ink_hrtime timeout_in) override;
+  virtual void set_inactivity_timeout(ink_hrtime timeout_in) override;
+  virtual void cancel_inactivity_timeout() override;
   void clear_inactive_timer();
   void clear_active_timer();
   void clear_timers();
@@ -243,7 +260,7 @@ public:
   }
 
   bool
-  is_first_transaction() const
+  is_first_transaction() const override
   {
     return is_first_transaction_flag;
   }
@@ -253,6 +270,7 @@ private:
   void response_process_data(bool &is_done);
   bool response_is_data_available() const;
   Event *send_tracked_event(Event *event, int send_event, VIO *vio);
+  void send_response_body(bool call_update);
 
   HTTPParser http_parser;
   ink_hrtime _start_time;
@@ -260,7 +278,6 @@ private:
   Http2StreamId _id;
   Http2StreamState _state;
 
-  MIOBuffer response_buffer;
   HTTPHdr _req_header;
   VIO read_vio;
   VIO write_vio;
@@ -295,6 +312,12 @@ private:
   uint64_t data_length = 0;
   uint64_t bytes_sent  = 0;
 
+  ssize_t _client_rwnd;
+  ssize_t _server_rwnd = Http2::initial_window_size;
+
+  std::vector<size_t> _recent_rwnd_increment = {SIZE_MAX, SIZE_MAX, SIZE_MAX, SIZE_MAX, SIZE_MAX};
+  int _recent_rwnd_increment_index           = 0;
+
   ChunkedHandler chunked_handler;
   Event *cross_thread_event      = nullptr;
   Event *buffer_full_write_event = nullptr;
@@ -315,5 +338,3 @@ extern ClassAllocator<Http2Stream> http2StreamAllocator;
 
 extern bool check_continuation(Continuation *cont);
 extern bool check_stream_thread(Continuation *cont);
-
-#endif

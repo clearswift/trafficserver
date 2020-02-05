@@ -30,8 +30,7 @@
 
  ****************************************************************************/
 
-#ifndef _HTTP_SM_H_
-#define _HTTP_SM_H_
+#pragma once
 
 #include "ts/ink_platform.h"
 #include "P_EventSystem.h"
@@ -104,13 +103,14 @@ struct HttpVCTableEntry {
   VIO *write_vio;
   HttpSMHandler vc_handler;
   HttpVC_t vc_type;
+  HttpSM *sm;
   bool eos;
   bool in_tunnel;
 };
 
 struct HttpVCTable {
   static const int vc_table_max_entries = 4;
-  HttpVCTable();
+  HttpVCTable(HttpSM *);
 
   HttpVCTableEntry *new_entry();
   HttpVCTableEntry *find_entry(VConnection *);
@@ -122,6 +122,7 @@ struct HttpVCTable {
 
 private:
   HttpVCTableEntry vc_table[vc_table_max_entries];
+  HttpSM *sm = nullptr;
 };
 
 inline bool
@@ -177,6 +178,21 @@ enum HttpPluginTunnel_t {
 class CoreUtils;
 class PluginVCCore;
 
+class PostDataBuffers
+{
+public:
+  PostDataBuffers() { Debug("http_redirect", "[PostDataBuffers::PostDataBuffers]"); }
+  MIOBuffer *postdata_copy_buffer            = nullptr;
+  IOBufferReader *postdata_copy_buffer_start = nullptr;
+  IOBufferReader *ua_buffer_reader           = nullptr;
+
+  void clear();
+  void init(IOBufferReader *ua_reader);
+  void copy_partial_post_data();
+
+  ~PostDataBuffers();
+};
+
 class HttpSM : public Continuation
 {
   friend class HttpPagesHandler;
@@ -188,8 +204,9 @@ public:
   virtual void destroy();
 
   static HttpSM *allocate();
-  HttpCacheSM &get_cache_sm();      // Added to get the object of CacheSM YTS Team, yamsat
-  HttpVCTableEntry *get_ua_entry(); // Added to get the ua_entry pointer  - YTS-TEAM
+  HttpCacheSM &get_cache_sm();          // Added to get the object of CacheSM YTS Team, yamsat
+  HttpVCTableEntry *get_ua_entry();     // Added to get the ua_entry pointer  - YTS-TEAM
+  HttpVCTableEntry *get_server_entry(); // Added to get the server_entry pointer
 
   void init();
 
@@ -206,6 +223,12 @@ public:
   get_server_session()
   {
     return server_session;
+  }
+
+  ProxyClientTransaction *
+  get_ua_txn()
+  {
+    return ua_session;
   }
 
   // Called by transact.  Updates are fire and forget
@@ -289,6 +312,14 @@ public:
 
   HttpTransact::State t_state;
 
+  // _postbuf api
+  int64_t postbuf_reader_avail();
+  int64_t postbuf_buffer_avail();
+  void postbuf_clear();
+  void disable_redirect();
+  void postbuf_copy_partial_data();
+  void postbuf_init(IOBufferReader *ua_reader);
+
 protected:
   int reentrancy_count;
 
@@ -360,9 +391,6 @@ protected:
 
   int tunnel_handler_100_continue(int event, void *data);
   int tunnel_handler_cache_fill(int event, void *data);
-#ifdef PROXY_DRAIN
-  int state_drain_client_request_body(int event, void *data);
-#endif /* PROXY_DRAIN */
   int state_read_client_request_header(int event, void *data);
   int state_watch_for_client_abort(int event, void *data);
   int state_read_push_response_header(int event, void *data);
@@ -429,9 +457,7 @@ protected:
   void do_api_callout_internal();
   void do_redirect();
   void redirect_request(const char *redirect_url, const int redirect_len);
-#ifdef PROXY_DRAIN
   void do_drain_request_body();
-#endif
 
   bool do_congestion_control_lookup();
 
@@ -561,6 +587,9 @@ public:
   {
     return terminate_sm;
   }
+
+private:
+  PostDataBuffers _postbuf;
 };
 
 // Function to get the cache_sm object - YTS Team, yamsat
@@ -575,6 +604,12 @@ inline HttpVCTableEntry *
 HttpSM::get_ua_entry()
 {
   return ua_entry;
+}
+
+inline HttpVCTableEntry *
+HttpSM::get_server_entry()
+{
+  return server_entry;
 }
 
 inline HttpSM *
@@ -668,4 +703,39 @@ HttpSM::is_transparent_passthrough_allowed()
           ua_session->get_transact_count() == 1);
 }
 
-#endif
+inline int64_t
+HttpSM::postbuf_reader_avail()
+{
+  return this->_postbuf.ua_buffer_reader->read_avail();
+}
+
+inline int64_t
+HttpSM::postbuf_buffer_avail()
+{
+  return this->_postbuf.postdata_copy_buffer_start->read_avail();
+}
+
+inline void
+HttpSM::postbuf_clear()
+{
+  this->_postbuf.clear();
+}
+
+inline void
+HttpSM::disable_redirect()
+{
+  this->enable_redirection = false;
+  this->_postbuf.clear();
+}
+
+inline void
+HttpSM::postbuf_copy_partial_data()
+{
+  this->_postbuf.copy_partial_post_data();
+}
+
+inline void
+HttpSM::postbuf_init(IOBufferReader *ua_reader)
+{
+  this->_postbuf.init(ua_reader);
+}

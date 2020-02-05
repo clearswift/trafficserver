@@ -20,8 +20,7 @@
 // Base class for all Conditions and Operations. We share the "linked" list, and the
 // resource management / requirements.
 //
-#ifndef __STATEMENT_H__
-#define __STATEMENT_H__ 1
+#pragma once
 
 #include <string>
 #include <time.h>
@@ -84,6 +83,7 @@ public:
   {
     TSDebug(PLUGIN_NAME_DBG, "Calling DTOR for Statement");
     free_pdata();
+    delete _next;
   }
 
   // Private data
@@ -162,5 +162,3 @@ private:
   std::vector<TSHttpHookID> _allowed_hooks;
   TSHttpHookID _hook;
 };
-
-#endif // __STATEMENT_H

@@ -19,8 +19,7 @@
   limitations under the License.
  */
 
-#include "ts/ink_defs.h"
-#include "ts/ink_platform.h"
+#include <ts/ts.h>
 
 #include <stdlib.h>
 #include <stdio.h>
@@ -32,7 +31,6 @@
 #include <sys/types.h>
 #include <sys/stat.h>
 #include <unistd.h>
-#include <ts/ts.h>
 
 #ifdef HAVE_PCRE_PCRE_H
 #include <pcre/pcre.h>
@@ -331,7 +329,7 @@ list_config(plugin_state_t *pstate, invalidate_t *i)
 }
 
 static int
-free_handler(TSCont cont, TSEvent event ATS_UNUSED, void *edata ATS_UNUSED)
+free_handler(TSCont cont, TSEvent event, void *edata)
 {
   invalidate_t *iptr;
 
@@ -343,12 +341,16 @@ free_handler(TSCont cont, TSEvent event ATS_UNUSED, void *edata ATS_UNUSED)
 }
 
 static int
-config_handler(TSCont cont, TSEvent event ATS_UNUSED, void *edata ATS_UNUSED)
+config_handler(TSCont cont, TSEvent event, void *edata)
 {
   plugin_state_t *pstate;
   invalidate_t *i, *iptr;
   TSCont free_cont;
   bool updated;
+  TSMutex mutex;
+
+  mutex = TSContMutexGet(cont);
+  TSMutexLock(mutex);
 
   TSDebug(LOG_PREFIX, "In config Handler");
   pstate = (plugin_state_t *)TSContDataGet(cont);
@@ -373,7 +375,12 @@ config_handler(TSCont cont, TSEvent event ATS_UNUSED, void *edata ATS_UNUSED)
     }
   }
 
-  TSContSchedule(cont, CONFIG_TMOUT, TS_THREAD_POOL_TASK);
+  TSMutexUnlock(mutex);
+
+  // Don't reschedule for TS_EVENT_MGMT_UPDATE
+  if (event == TS_EVENT_TIMEOUT) {
+    TSContSchedule(cont, CONFIG_TMOUT, TS_THREAD_POOL_TASK);
+  }
   return 0;
 }
 
@@ -476,7 +483,8 @@ TSPluginInit(int argc, const char *argv[])
   TSPluginRegistrationInfo info;
   TSCont main_cont, config_cont;
   plugin_state_t *pstate;
-  invalidate_t *iptr = NULL;
+  invalidate_t *iptr        = NULL;
+  bool disable_timed_reload = false;
 
   TSDebug(LOG_PREFIX, "Starting plugin init.");
 
@@ -484,8 +492,10 @@ TSPluginInit(int argc, const char *argv[])
   init_plugin_state_t(pstate);
 
   int c;
-  static const struct option longopts[] = {
-    {"config", required_argument, NULL, 'c'}, {"log", required_argument, NULL, 'l'}, {NULL, 0, NULL, 0}};
+  static const struct option longopts[] = {{"config", required_argument, NULL, 'c'},
+                                           {"log", required_argument, NULL, 'l'},
+                                           {"disable-timed-reload", no_argument, NULL, 'd'},
+                                           {NULL, 0, NULL, 0}};
 
   while ((c = getopt_long(argc, (char *const *)argv, "c:l:", longopts, NULL)) != -1) {
     switch (c) {
@@ -498,6 +508,9 @@ TSPluginInit(int argc, const char *argv[])
         TSTextLogObjectRollingIntervalSecSet(pstate->log, LOG_ROLL_INTERVAL);
         TSTextLogObjectRollingOffsetHrSet(pstate->log, LOG_ROLL_OFFSET);
       }
+      break;
+    case 'd':
+      disable_timed_reload = true;
       break;
     default:
       break;
@@ -545,7 +558,12 @@ TSPluginInit(int argc, const char *argv[])
 
   config_cont = TSContCreate(config_handler, TSMutexCreate());
   TSContDataSet(config_cont, (void *)pstate);
-  TSContSchedule(config_cont, CONFIG_TMOUT, TS_THREAD_POOL_TASK);
+
+  TSMgmtUpdateRegister(config_cont, LOG_PREFIX);
+
+  if (!disable_timed_reload) {
+    TSContSchedule(config_cont, CONFIG_TMOUT, TS_THREAD_POOL_TASK);
+  }
 
   TSDebug(LOG_PREFIX, "Plugin Init Complete.");
 }

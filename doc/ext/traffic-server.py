@@ -34,6 +34,18 @@ from sphinx.roles import XRefRole
 from sphinx.locale import l_, _
 import sphinx
 
+import subprocess
+import re
+
+# 2/3 compat logic
+try:
+    basestring
+
+    def is_string_type(s):
+        return isinstance(s, basestring)
+except NameError:
+    def is_string_type(s):
+        return isinstance(s, str)
 
 class TSConfVar(std.Target):
     """
@@ -63,7 +75,7 @@ class TSConfVar(std.Target):
         field = nodes.field()
         field.append(nodes.field_name(text=tag))
         body = nodes.field_body()
-        if (isinstance(value, basestring)):
+        if is_string_type(value):
             body.append(sphinx.addnodes.compact_paragraph(text=value))
         else:
             body.append(value)
@@ -190,7 +202,7 @@ class TSStat(std.Target):
         field = nodes.field()
         field.append(nodes.field_name(text=tag))
         body = nodes.field_body()
-        if (isinstance(value, basestring)):
+        if is_string_type(value):
             body.append(sphinx.addnodes.compact_paragraph(text=value))
         else:
             body.append(value)
@@ -315,11 +327,11 @@ class TrafficServerDomain(Domain):
 
     def clear_doc(self, docname):
         cv_list = self.data['cv']
-        for var, doc in cv_list.items():
+        for var, doc in list(cv_list.items()):
             if doc == docname:
                 del cv_list[var]
         stat_list = self.data['stat']
-        for var, doc in stat_list.items():
+        for var, doc in list(stat_list.items()):
             if doc == docname:
                 del stat_list[var]
 
@@ -343,11 +355,22 @@ class TrafficServerDomain(Domain):
         if (dst_doc):
             return sphinx.util.nodes.make_refnode(builder, src_doc, dst_doc, nodes.make_id(target), cont_node, 'records.config')
 
-    def get_objects(self):
-        for var, doc in self.data['cv'].iteritems():
-            yield var, var, 'cv', doc, var, 1
-        for var, doc in self.data['stat'].iteritems():
-            yield var, var, 'stat', doc, var, 1
+    # Python 2/3 compat - iteritems is 2, items is 3
+    # Although perhaps the lists are small enough items could be used in Python 2.
+    try:
+        {}.iteritems()
+
+        def get_objects(self):
+            for var, doc in self.data['cv'].iteritems():
+                yield var, var, 'cv', doc, var, 1
+            for var, doc in self.data['stat'].iteritems():
+                yield var, var, 'stat', doc, var, 1
+    except AttributeError:
+        def get_objects(self):
+            for var, doc in self.data['cv'].items():
+                yield var, var, 'cv', doc, var, 1
+            for var, doc in self.data['stat'].items():
+                yield var, var, 'stat', doc, var, 1
 
 
 # These types are ignored as missing references for the C++ domain.
@@ -358,8 +381,8 @@ EXTERNAL_TYPES = set((
     'uint8_t', 'uint16_t', 'uint24_t', 'uint32_t', 'uint64_t',
     'int8_t', 'int16_t', 'int24_t', 'int32_t', 'int64_t',
     'unsigned', 'unsigned int',
-    'off_t', 'size_t', 'time_t',
-    'Event', 'INK_MD5', 'DLL<EvacuationBlock>',
+    'off_t', 'time_t',
+    'Event', 'INK_MD5',
     'sockaddr'
 ))
 
@@ -381,10 +404,50 @@ def xref_cleanup(app, env, node, contnode):
     return
 
 
+# get the branch this documentation is building for in X.X.x form
+with open('../configure.ac', 'r') as f:
+    contents = f.read()
+    match = re.compile('m4_define\(\[TS_VERSION_S],\[(.*?)]\)').search(contents)
+    autoconf_version = '.'.join(match.group(1).split('.', 2)[:2] + ['x'])
+
+# get the current branch the local repository is on
+git_branch = subprocess.check_output(['git', 'rev-parse', '--abbrev-ref', 'HEAD'])
+
+
+def make_github_link(name, rawtext, text, lineno, inliner, options={}, content=[]):
+    """
+    This docutils role lets us link to source code via the handy :ts:git: markup.
+    Link references are rooted at the top level source directory. All links resolve
+    to GitHub.
+
+    Examples:
+
+        To link to proxy/Main.cc:
+
+            Hi, here is a link to the proxy entry point: :ts:git:`proxy/Main.cc`.
+
+        To link to CONTRIBUTING.md:
+
+            If you want to contribute, take a look at :ts:git:`CONTRIBUTING.md`.
+    """
+    url = 'https://github.com/apache/trafficserver/blob/{}/{}'
+    ref = autoconf_version if autoconf_version == git_branch else 'master'
+    node = nodes.reference(rawtext, text, refuri=url.format(ref, text), **options)
+    return [node], []
+
+
 def setup(app):
     app.add_crossref_type('configfile', 'file',
                           objname='Configuration file',
                           indextemplate='pair: %s; Configuration files')
+    
+    # Very ugly, but as of Sphinx 1.8 it must be done. There is an `override` option to add_crossref_type
+    # but it only applies to the directive, not the role (`file` in this case). If this isn't cleared
+    # explicitly the build will fail out due to the conflict. In this case, since the role action is the
+    # same in all cases, the output is correct. This does assume the config file names and log files
+    # names are disjoint sets.
+    del app.registry.domain_roles['std']['file']
+
     app.add_crossref_type('logfile', 'file',
                           objname='Log file',
                           indextemplate='pair: %s; Log files')
@@ -393,6 +456,9 @@ def setup(app):
     rst.roles.register_generic_role('const', nodes.literal)
 
     app.add_domain(TrafficServerDomain)
+
+    # this lets us do :ts:git:`<file_path>` and link to the file on github
+    app.add_role_to_domain('ts', 'git', make_github_link)
 
     # Types that we want the C domain to consider built in
     for word in EXTERNAL_TYPES:

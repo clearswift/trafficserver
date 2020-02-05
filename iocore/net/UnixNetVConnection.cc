@@ -263,7 +263,7 @@ read_from_net(NetHandler *nh, UnixNetVConnection *vc, EThread *thread)
   }
 
   // if it is not enabled.
-  if (!s->enabled || s->vio.op != VIO::READ) {
+  if (!s->enabled || s->vio.op != VIO::READ || s->vio.is_disabled()) {
     read_disable(nh, vc);
     return;
   }
@@ -432,6 +432,13 @@ write_to_net_io(NetHandler *nh, UnixNetVConnection *vc, EThread *thread)
   // This function will always return true unless
   // vc is an SSLNetVConnection.
   if (!vc->getSSLHandShakeComplete()) {
+    if (vc->trackFirstHandshake()) {
+      // Send the write ready on up to the state machine
+      write_signal_and_update(VC_EVENT_WRITE_READY, vc);
+      vc->write.triggered = 0;
+      nh->write_ready_list.remove(vc);
+    }
+
     int err, ret;
 
     if (vc->get_context() == NET_VCONNECTION_OUT) {
@@ -729,7 +736,7 @@ UnixNetVConnection::do_io_shutdown(ShutdownHowTo_t howto)
     read.vio.buffer.clear();
     read.vio.nbytes = 0;
     read.vio._cont  = nullptr;
-    f.shutdown      = NET_VC_SHUTDOWN_READ;
+    f.shutdown |= NET_VC_SHUTDOWN_READ;
     break;
   case IO_SHUTDOWN_WRITE:
     socketManager.shutdown(((UnixNetVConnection *)this)->con.fd, 1);
@@ -737,7 +744,7 @@ UnixNetVConnection::do_io_shutdown(ShutdownHowTo_t howto)
     write.vio.buffer.clear();
     write.vio.nbytes = 0;
     write.vio._cont  = nullptr;
-    f.shutdown       = NET_VC_SHUTDOWN_WRITE;
+    f.shutdown |= NET_VC_SHUTDOWN_WRITE;
     break;
   case IO_SHUTDOWN_READWRITE:
     socketManager.shutdown(((UnixNetVConnection *)this)->con.fd, 2);
@@ -1303,11 +1310,11 @@ UnixNetVConnection::connectUp(EThread *t, int fd)
   int res;
 
   thread = t;
-  if (check_net_throttle(CONNECT, submit_time)) {
-    check_throttle_warning();
-    action_.continuation->handleEvent(NET_EVENT_OPEN_FAILED, (void *)-ENET_THROTTLING);
-    free(t);
-    return CONNECT_FAILURE;
+  if (check_net_throttle(CONNECT)) {
+    check_throttle_warning(CONNECT);
+    res = -ENET_THROTTLING;
+    NET_INCREMENT_DYN_STAT(net_connections_throttled_out_stat);
+    goto fail;
   }
 
   // Force family to agree with remote (server) address.
@@ -1344,18 +1351,6 @@ UnixNetVConnection::connectUp(EThread *t, int fd)
     con.is_bound     = true;
   }
 
-  if (check_emergency_throttle(con)) {
-    // The `con' could be closed if there is hyper emergency
-    if (con.fd == NO_FD) {
-      // We need to decrement the stat because close_UnixNetVConnection only decrements with a valid connection descriptor.
-      NET_SUM_GLOBAL_DYN_STAT(net_connections_currently_open_stat, -1);
-      // Set errno force to EMFILE (reached limit for open file descriptors)
-      errno = EMFILE;
-      res   = -errno;
-      goto fail;
-    }
-  }
-
   // Must connect after EventIO::Start() to avoid a race condition
   // when edge triggering is used.
   if (ep.start(get_PollDescriptor(t), this, EVENTIO_READ | EVENTIO_WRITE) < 0) {
@@ -1371,8 +1366,11 @@ UnixNetVConnection::connectUp(EThread *t, int fd)
     }
   }
 
-  // start up next round immediately
+  // Did not fail, increment connection count
+  NET_SUM_GLOBAL_DYN_STAT(net_connections_currently_open_stat, 1);
+  ink_release_assert(con.fd != NO_FD);
 
+  // start up next round immediately
   SET_HANDLER(&UnixNetVConnection::mainEvent);
 
   nh = get_NetHandler(t);
@@ -1498,17 +1496,8 @@ UnixNetVConnection::migrateToCurrentThread(Continuation *cont, EThread *t)
   SSLNetVConnection *sslvc = dynamic_cast<SSLNetVConnection *>(this);
 
   SSL *save_ssl = (sslvc) ? sslvc->ssl : nullptr;
-  if (save_ssl) {
-    SSLNetVCDetach(sslvc->ssl);
-    sslvc->ssl = nullptr;
-  }
 
-  // Do_io_close will signal the VC to be freed on the original thread
-  // Since we moved the con context, the fd will not be closed
-  // Go ahead and remove the fd from the original thread's epoll structure, so it is not
-  // processed on two threads simultaneously
-  this->ep.stop();
-  this->do_io_close();
+  UnixNetVConnection *ret_vc = nullptr;
 
   // Create new VC:
   if (save_ssl) {
@@ -1518,8 +1507,8 @@ UnixNetVConnection::migrateToCurrentThread(Continuation *cont, EThread *t)
       sslvc = nullptr;
     } else {
       sslvc->set_context(get_context());
+      ret_vc = sslvc;
     }
-    return sslvc;
     // Update the SSL fields
   } else {
     UnixNetVConnection *netvc = static_cast<UnixNetVConnection *>(netProcessor.allocate_vc(t));
@@ -1528,9 +1517,27 @@ UnixNetVConnection::migrateToCurrentThread(Continuation *cont, EThread *t)
       netvc = nullptr;
     } else {
       netvc->set_context(get_context());
+      ret_vc = netvc;
     }
-    return netvc;
   }
+
+  // clear con.fd and ssl ctx from this NetVC since a new NetVC is created.
+  if (ret_vc != nullptr) {
+    if (save_ssl) {
+      SSLNetVCDetach(sslvc->ssl);
+      sslvc->ssl = nullptr;
+    }
+    ink_assert(this->con.fd == NO_FD);
+
+    // Do_io_close will signal the VC to be freed on the original thread
+    // Since we moved the con context, the fd will not be closed
+    // Go ahead and remove the fd from the original thread's epoll structure, so it is not
+    // processed on two threads simultaneously
+    this->ep.stop();
+    this->do_io_close();
+  }
+
+  return ret_vc;
 }
 
 void
@@ -1555,4 +1562,34 @@ void
 UnixNetVConnection::remove_from_active_queue()
 {
   nh->remove_from_active_queue(this);
+}
+
+int
+UnixNetVConnection::set_tcp_congestion_control(int side)
+{
+#ifdef TCP_CONGESTION
+  ts::string_view ccp;
+
+  if (side == CLIENT_SIDE) {
+    ccp = net_ccp_in;
+  } else {
+    ccp = net_ccp_out;
+  }
+
+  if (!ccp.empty()) {
+    int rv = setsockopt(con.fd, IPPROTO_TCP, TCP_CONGESTION, reinterpret_cast<const void *>(ccp.data()), ccp.length());
+
+    if (rv < 0) {
+      Error("Unable to set TCP congestion control on socket %d to \"%s\", errno=%d (%s)", con.fd, ccp.data(), errno,
+            strerror(errno));
+    } else {
+      Debug("socket", "Setting TCP congestion control on socket [%d] to \"%s\" -> %d", con.fd, ccp.data(), rv);
+    }
+    return 0;
+  }
+  return -1;
+#else
+  Debug("socket", "Setting TCP congestion control is not supported on this platform.");
+  return -1;
+#endif
 }

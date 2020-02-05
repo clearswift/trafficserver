@@ -19,8 +19,7 @@
 // Public interface for creating all values.
 //
 //
-#ifndef __VALUE_H__
-#define __VALUE_H__ 1
+#pragma once
 
 #include <string>
 
@@ -44,6 +43,12 @@ public:
   Value() : _need_expander(false), _value(""), _int_value(0), _float_value(0.0), _cond_val(NULL)
   {
     TSDebug(PLUGIN_NAME_DBG, "Calling CTOR for Value");
+  }
+
+  virtual ~Value()
+  {
+    TSDebug(PLUGIN_NAME_DBG, "Calling DTOR for Value");
+    delete _cond_val;
   }
 
   void
@@ -122,5 +127,3 @@ private:
   double _float_value;
   Condition *_cond_val;
 };
-
-#endif // __VALUE_H
