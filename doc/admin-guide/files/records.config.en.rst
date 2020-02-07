@@ -407,7 +407,7 @@ Network
    given time. Roughly 10% of these connections are reserved for origin server
    connections, i.e. from the default, only ~9,000 client connections can be
    handled. This should be tuned according to your memory size, and expected
-   work load.
+   work load.  If this is set to 0, the throttling logic is disabled.
 
 .. ts:cv:: CONFIG proxy.config.net.default_inactivity_timeout INT 86400
    :reloadable:
@@ -941,14 +941,9 @@ ip-resolve
 
 .. note::
 
-   If HTTP/1.1 is used, then |TS| can use keep-alive connections with
-   pipelining to origin servers.
+   If HTTP/1.1 is used, then |TS| can use keep-alive connections to origin servers.
 
-   If HTTP/1.0 is used, then |TS| can use keep-alive connections without
-   pipelining to origin servers.
-
-   If HTTP/0.9 is used, then |TS| does not use keep-alive connections to
-   origin servers.
+   If HTTP/1.0 is used, then |TS| can use keep-alive connections to origin servers.
 
 .. ts:cv:: CONFIG proxy.config.http.chunking.size INT 4096
    :overridable:
@@ -1685,6 +1680,22 @@ Security
    value will limit the size of post bodies. If a request is received with a
    post body larger than this limit the response will be terminated with
    413 - Request Entity Too Large and logged accordingly.
+
+.. ts:cv:: CONFIG proxy.config.http.allow_multi_range INT 0
+   :reloadable:
+   :overridable:
+
+   This option allows the administrator to configure different behavior and
+   handling of requests with multiple ranges in the ``Range`` header.
+
+   ===== ======================================================================
+   Value Description
+   ===== ======================================================================
+   ``0`` Do not allow multiple ranges, effectively ignoring the ``Range`` header
+   ``1`` Allows multiple ranges. This can be potentially dangerous since well
+         formed requests can cause excessive resource consumption on the server.
+   ``2`` Similar to 0, except return a 416 error code and no response body.
+   ===== ======================================================================
 
 Cache Control
 =============
@@ -2536,16 +2547,16 @@ HostDB
    ``ipv4``   Resolve to an IPv4 address.
    ``ipv6``   Resolve to an IPv6 address.
    ``client`` Resolve to the same family as the client IP address.
-   ``none``   Stop resolving.
+   ``only``   Stop resolving.
    ========== ====================================================
 
    The order of the keywords is critical. When a host name needs to be resolved
    it is resolved in same order as the keywords. If a resolution fails, the
-   next option in the list is tried. The keyword ``none`` means to give up
+   next option in the list is tried. The keyword ``only`` means to give up
    resolution entirely. The keyword list has a maximum length of three
    keywords, more are never needed. By default there is an implicit
    ``ipv4;ipv6`` attached to the end of the string unless the keyword
-   ``none`` appears.
+   ``only`` appears.
 
 .. topic:: Example
 
@@ -2561,13 +2572,13 @@ HostDB
 
    Resolve only to IPv4. ::
 
-      ipv4;none
+      ipv4;only
 
 .. topic:: Example
 
    Resolve only to the same family as the client (do not permit cross family transactions). ::
 
-      client;none
+      client;only
 
    This value is a global default that can be overridden by :ts:cv:`proxy.config.http.server_ports`.
 
@@ -2989,6 +3000,10 @@ SSL Termination
 
    ECDHE-ECDSA-AES256-GCM-SHA384:ECDHE-RSA-AES256-GCM-SHA384:ECDHE-ECDSA-AES128-GCM-SHA256:ECDHE-RSA-AES128-GCM-SHA256:DHE-RSA-AES256-GCM-SHA384:DHE-DSS-AES256-GCM-SHA384:DHE-RSA-AES128-GCM-SHA256:DHE-DSS-AES128-GCM-SHA256:ECDHE-ECDSA-AES256-SHA384:ECDHE-RSA-AES256-SHA384:ECDHE-ECDSA-AES256-SHA:ECDHE-RSA-AES256-SHA:ECDHE-ECDSA-AES128-SHA256:ECDHE-RSA-AES128-SHA256:ECDHE-ECDSA-AES128-SHA:ECDHE-RSA-AES128-SHA:DHE-RSA-AES256-SHA256:DHE-DSS-AES256-SHA256:DHE-RSA-AES128-SHA256:DHE-DSS-AES128-SHA256:DHE-RSA-AES256-SHA:DHE-DSS-AES256-SHA:DHE-RSA-AES128-SHA:DHE-DSS-AES128-SHA:AES256-GCM-SHA384:AES128-GCM-SHA256:AES256-SHA256:AES128-SHA256:AES256-SHA:AES128-SHA:DES-CBC3-SHA:!aNULL:!eNULL:!EXPORT:!DES:!RC4:!MD5:!PSK:!aECDH:!EDH-DSS-DES-CBC3-SHA:!EDH-RSA-DES-CBC3-SHA:!KRB5-DES-CBC3-SHA
 
+.. ts:cv:: CONFIG proxy.config.ssl.client.cipher_suite STRING <See notes under proxy.config.ssl.server.cipher_suite.>
+
+   Configures the cipher_suite which |TS| will use for SSL connections to origin or next hop.
+
 .. ts:cv:: CONFIG proxy.config.ssl.TLSv1 INT 1
 
    Enables (``1``) or disables (``0``) TLSv1.
@@ -3254,6 +3269,23 @@ Client-Related Configuration
    Specifies the location of the certificate authority file against
    which the origin server will be verified.
 
+.. ts:cv:: CONFIG proxy.config.ssl.client.SSLv3 INT 0
+
+   Enables (``1``) or disables (``0``) SSLv3 in the ATS client context. Disabled by default
+
+.. ts:cv:: CONFIG proxy.config.ssl.client.TLSv1 INT 1
+
+   Enables (``1``) or disables (``0``) TLSv1 in the ATS client context. If not specified, enabled by default
+
+.. ts:cv:: CONFIG proxy.config.ssl.client.TLSv1_1 INT 1
+
+   Enables (``1``) or disables (``0``) TLSv1_1 in the ATS client context. If not specified, enabled by default
+
+.. ts:cv:: CONFIG proxy.config.ssl.client.TLSv1_2 INT 1
+
+   Enables (``1``) or disables (``0``) TLSv1_2 in the ATS client context. If not specified, enabled by default
+
+
 OCSP Stapling Configuration
 ===========================
 
@@ -3350,6 +3382,55 @@ HTTP/2 Configuration
    Indicates the maximum number of HTTP/2 server pushes that are remembered per
    HTTP/2 connection to avoid duplicate pushes on the same connection. If the
    maximum number is reached, new entries are not remembered.
+
+.. ts:cv:: CONFIG proxy.config.http2.stream_error_rate_threshold FLOAT 0.1
+   :reloadable:
+
+   This is the maximum stream error rate |TS| allows on an HTTP/2 connection.
+   |TS| gracefully closes connections that have stream error rates above this
+   setting by sending GOAWAY frames.
+
+.. ts:cv:: CONFIG proxy.config.http2.max_settings_per_frame INT 7
+   :reloadable:
+
+   Specifies how many settings in an HTTP/2 SETTINGS frame |TS| accepts.
+   Clients exceeded this limit will be immediately disconnected with an error
+   code of ENHANCE_YOUR_CALM.
+
+.. ts:cv:: CONFIG proxy.config.http2.max_settings_per_minute INT 14
+   :reloadable:
+
+   Specifies how many settings in HTTP/2 SETTINGS frames |TS| accept for a minute.
+   Clients exceeded this limit will be immediately disconnected with an error
+   code of ENHANCE_YOUR_CALM.
+
+.. ts:cv:: CONFIG proxy.config.http2.max_settings_frames_per_minute INT 14
+   :reloadable:
+
+   Specifies how many SETTINGS frames |TS| receives for a minute at maximum.
+   Clients exceeded this limit will be immediately disconnected with an error
+   code of ENHANCE_YOUR_CALM.
+
+.. ts:cv:: CONFIG proxy.config.http2.max_ping_frames_per_minute INT 60
+   :reloadable:
+
+   Specifies how many number of PING frames |TS| receives for a minute at maximum.
+   Clients exceeded this limit will be immediately disconnected with an error
+   code of ENHANCE_YOUR_CALM.
+
+.. ts:cv:: CONFIG proxy.config.http2.max_priority_frames_per_minute INT 120
+   :reloadable:
+
+   Specifies how many number of PRIORITY frames |TS| receives for a minute at maximum.
+   Clients exceeded this limit will be immediately disconnected with an error
+   code of ENHANCE_YOUR_CALM.
+
+.. ts:cv:: CONFIG proxy.config.http2.min_avg_window_update FLOAT 2560.0
+   :reloadable:
+
+   Specifies the minimum average window increment |TS| allows. The average will be calculated based on the last 5 WINDOW_UPDATE frames.
+   Clients that send smaller window increments lower than this limit will be immediately disconnected with an error
+   code of ENHANCE_YOUR_CALM.
 
 Plug-in Configuration
 =====================

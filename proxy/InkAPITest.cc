@@ -7615,6 +7615,7 @@ const char *SDK_Overridable_Configs[TS_CONFIG_LAST_ENTRY] = {
   "proxy.config.http.parent_proxy.per_parent_connect_attempts",
   "proxy.config.http.parent_proxy.connect_attempts_timeout",
   "proxy.config.ssl.client.verify.server",
+  "proxy.config.http.allow_multi_range",
 };
 REGRESSION_TEST(SDK_API_OVERRIDABLE_CONFIGS)(RegressionTest *test, int /* atype ATS_UNUSED */, int *pstatus)
 {
@@ -7827,7 +7828,7 @@ REGRESSION_TEST(SDK_API_ENCODING)(RegressionTest *test, int /* atype ATS_UNUSED 
   // test to verify TSStringPercentDecode does not write past the end of the
   // buffer
   const size_t buf_len = strlen(url3) + 1; // 81
-  strncpy(buf, url3, buf_len - 1);
+  memcpy(buf, url3, buf_len - 1);
   const char canary = 0xFF;
   buf[buf_len - 1]  = canary;
 

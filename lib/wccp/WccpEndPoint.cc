@@ -383,7 +383,7 @@ CacheImpl::defineServiceGroup(ServiceGroup const &svc, ServiceGroup::Result *res
   if (spot == m_groups.end()) { // not defined
     group        = &(m_groups[svc_id]);
     group->m_svc = svc;
-    memset(&group->m_id, 0, sizeof(group->m_id));
+    memset(static_cast<void *>(&group->m_id), 0, sizeof(group->m_id));
     group->m_id.initDefaultHash(m_addr);
     zret = ServiceGroup::DEFINED;
   } else {
@@ -741,7 +741,6 @@ CacheImpl::handleISeeYou(IpHeader const & /* ip_hdr ATS_UNUSED */, ts::Buffer co
   uint32_t recv_id = msg.m_router_id.idElt().getRecvId();
   RouterBag::iterator ar_spot; // active router
   int router_idx;              // index in active routers.
-  std::vector<SeedRouter>::iterator seed_spot;
 
   CapComp &caps = msg.m_capabilities;
   // Handle the router that sent us this.

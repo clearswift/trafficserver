@@ -21,8 +21,7 @@
   limitations under the License.
  */
 
-#if !defined(P_VIO_h)
-#define P_VIO_h
+#pragma once
 #include "I_VIO.h"
 
 TS_INLINE
@@ -107,6 +106,7 @@ VIO::set_continuation(Continuation *acont)
 TS_INLINE void
 VIO::reenable()
 {
+  this->_disabled = false;
   if (vc_server)
     vc_server->reenable(this);
 }
@@ -119,8 +119,19 @@ VIO::reenable()
 TS_INLINE void
 VIO::reenable_re()
 {
+  this->_disabled = false;
   if (vc_server)
     vc_server->reenable_re(this);
 }
 
-#endif /* #if !defined ( P_VIO_h) */
+TS_INLINE void
+VIO::disable()
+{
+  this->_disabled = true;
+}
+
+TS_INLINE bool
+VIO::is_disabled()
+{
+  return this->_disabled;
+}

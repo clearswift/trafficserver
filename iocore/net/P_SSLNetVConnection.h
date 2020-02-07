@@ -29,8 +29,7 @@
 
 
  ****************************************************************************/
-#if !defined(_SSLNetVConnection_h_)
-#define _SSLNetVConnection_h_
+#pragma once
 
 #include "ts/ink_platform.h"
 #include "P_EventSystem.h"
@@ -99,6 +98,16 @@ public:
   {
     read.enabled  = 1;
     write.enabled = 1;
+  }
+
+  bool
+  trackFirstHandshake() override
+  {
+    bool retval = sslHandshakeBeginTime == 0;
+    if (retval) {
+      sslHandshakeBeginTime = Thread::get_hrtime();
+    }
+    return retval;
   }
 
   bool
@@ -357,10 +366,9 @@ private:
 
   void (*sslReadyCallback)(SSL *ssl, void *data) = nullptr;
   void *sslReadyCallbackData = nullptr;
+  int64_t redoWriteSize;
 };
 
 typedef int (SSLNetVConnection::*SSLNetVConnHandler)(int, void *);
 
 extern ClassAllocator<SSLNetVConnection> sslNetVCAllocator;
-
-#endif /* _SSLNetVConnection_h_ */

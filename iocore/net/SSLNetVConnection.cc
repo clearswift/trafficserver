@@ -471,7 +471,7 @@ SSLNetVConnection::net_read_io(NetHandler *nh, EThread *lthread)
   // If it is not enabled, lower its priority.  This allows
   // a fast connection to speed match a slower connection by
   // shifting down in priority even if it could read.
-  if (!s->enabled || s->vio.op != VIO::READ) {
+  if (!s->enabled || s->vio.op != VIO::READ || s->vio.is_disabled()) {
     read_disable(nh, this);
     return;
   }
@@ -578,7 +578,7 @@ SSLNetVConnection::net_read_io(NetHandler *nh, EThread *lthread)
   }
 
   // If there is nothing to do or no space available, disable connection
-  if (ntodo <= 0 || !buf.writer()->write_avail()) {
+  if (ntodo <= 0 || !buf.writer()->write_avail() || s->vio.is_disabled()) {
     read_disable(nh, this);
     return;
   }
@@ -625,7 +625,7 @@ SSLNetVConnection::net_read_io(NetHandler *nh, EThread *lthread)
     read.triggered = 0;
     nh->read_ready_list.remove(this);
     Debug("ssl", "read_from_net, read finished - would block");
-#ifdef TS_USE_PORT
+#if TS_USE_PORT
     if (ret == SSL_READ_WOULD_BLOCK)
       readReschedule(nh);
     else
@@ -702,18 +702,26 @@ SSLNetVConnection::load_buffer_and_write(int64_t towrite, MIOBufferAccessor &buf
     // TS-2365: If the SSL max record size is set and we have
     // more data than that, break this into smaller write
     // operations.
-    if (SSLConfigParams::ssl_maxrecord > 0 && l > SSLConfigParams::ssl_maxrecord) {
-      l = SSLConfigParams::ssl_maxrecord;
-    } else if (SSLConfigParams::ssl_maxrecord == -1) {
-      if (sslTotalBytesSent < SSL_DEF_TLS_RECORD_BYTE_THRESHOLD) {
-        dynamic_tls_record_size = SSL_DEF_TLS_RECORD_SIZE;
-        SSL_INCREMENT_DYN_STAT(ssl_total_dyn_def_tls_record_count);
-      } else {
-        dynamic_tls_record_size = SSL_MAX_TLS_RECORD_SIZE;
-        SSL_INCREMENT_DYN_STAT(ssl_total_dyn_max_tls_record_count);
-      }
-      if (l > dynamic_tls_record_size) {
-        l = dynamic_tls_record_size;
+    //
+    // TS-4424: Don't mess with record size if last SSL_write failed with
+    // needs write
+    if (redoWriteSize) {
+      l             = redoWriteSize;
+      redoWriteSize = 0;
+    } else {
+      if (SSLConfigParams::ssl_maxrecord > 0 && l > SSLConfigParams::ssl_maxrecord) {
+        l = SSLConfigParams::ssl_maxrecord;
+      } else if (SSLConfigParams::ssl_maxrecord == -1) {
+        if (sslTotalBytesSent < SSL_DEF_TLS_RECORD_BYTE_THRESHOLD) {
+          dynamic_tls_record_size = SSL_DEF_TLS_RECORD_SIZE;
+          SSL_INCREMENT_DYN_STAT(ssl_total_dyn_def_tls_record_count);
+        } else {
+          dynamic_tls_record_size = SSL_MAX_TLS_RECORD_SIZE;
+          SSL_INCREMENT_DYN_STAT(ssl_total_dyn_max_tls_record_count);
+        }
+        if (l > dynamic_tls_record_size) {
+          l = dynamic_tls_record_size;
+        }
       }
     }
 
@@ -752,6 +760,7 @@ SSLNetVConnection::load_buffer_and_write(int64_t towrite, MIOBufferAccessor &buf
     sslLastWriteTime = now;
     sslTotalBytesSent += total_written;
   }
+  redoWriteSize = 0;
   if (num_really_written > 0) {
     needs |= EVENTIO_WRITE;
   } else {
@@ -769,6 +778,7 @@ SSLNetVConnection::load_buffer_and_write(int64_t towrite, MIOBufferAccessor &buf
     case SSL_ERROR_WANT_X509_LOOKUP: {
       if (SSL_ERROR_WANT_WRITE == err) {
         SSL_INCREMENT_DYN_STAT(ssl_error_want_write);
+        redoWriteSize = l;
       } else if (SSL_ERROR_WANT_X509_LOOKUP == err) {
         SSL_INCREMENT_DYN_STAT(ssl_error_want_x509_lookup);
         TraceOut(trace, get_remote_addr(), get_remote_port(), "Want X509 lookup");
@@ -824,7 +834,8 @@ SSLNetVConnection::SSLNetVConnection()
     sslHandshakeHookState(HANDSHAKE_HOOKS_PRE),
     npnSet(nullptr),
     npnEndpoint(nullptr),
-    sslTrace(false)
+    sslTrace(false),
+    redoWriteSize(0)
 {
 }
 
@@ -1016,12 +1027,9 @@ SSLNetVConnection::sslStartHandShake(int event, int &err)
         clientCTX = params->client_ctx;
       }
 
-      if (this->options.clientVerificationFlag && params->clientCACertFilename != nullptr && params->clientCACertPath != nullptr) {
-        if (!SSL_CTX_load_verify_locations(clientCTX, params->clientCACertFilename, params->clientCACertPath)) {
-          SSLError("invalid client CA Certificate file (%s) or CA Certificate path (%s)", params->clientCACertFilename,
-                   params->clientCACertPath);
-          return EVENT_ERROR;
-        }
+      if (!clientCTX) {
+        SSLErrorVC(this, "failed to create SSL client session");
+        return EVENT_ERROR;
       }
 
       this->ssl = make_ssl_connection(clientCTX, this);
@@ -1388,15 +1396,24 @@ SSLNetVConnection::sslClientHandShakeEvent(int &err)
   case SSL_ERROR_SSL:
   default: {
     err = (errno) ? errno : -ENET_CONNECT_FAILED;
+    char buf[512];
+    unsigned long e = ERR_peek_last_error();
+    ERR_error_string_n(e, buf, sizeof(buf));
     // FIXME -- This triggers a retry on cases of cert validation errors....
     Debug("ssl", "SSLNetVConnection::sslClientHandShakeEvent, SSL_ERROR_SSL");
     SSL_CLR_ERR_INCR_DYN_STAT(this, ssl_error_ssl, "SSLNetVConnection::sslClientHandShakeEvent, SSL_ERROR_SSL errno=%d", errno);
     Debug("ssl.error", "SSLNetVConnection::sslClientHandShakeEvent, SSL_ERROR_SSL");
-    char buf[512];
-    unsigned long e = ERR_peek_last_error();
-    ERR_error_string_n(e, buf, sizeof(buf));
     TraceIn(trace, get_remote_addr(), get_remote_port(),
             "SSL client handshake ERROR_SSL: sslErr=%d, ERR_get_error=%ld (%s) errno=%d", ssl_error, e, buf, errno);
+    if (e) {
+      if (this->options.sni_servername) {
+        Error("SSL connection failed for '%s': %s", this->options.sni_servername.get(), buf);
+      } else {
+        char buff[INET6_ADDRSTRLEN];
+        ats_ip_ntop(this->get_remote_addr(), buff, INET6_ADDRSTRLEN);
+        Error("SSL connection failed for '%s': %s", buff, buf);
+      }
+    }
     return EVENT_ERROR;
   } break;
   }
@@ -1515,6 +1532,7 @@ SSLNetVConnection::reenable(NetHandler *nh)
     }
     Debug("ssl", "iterate from reenable curHook=%p %d", curHook, sslHandshakeHookState);
   }
+
   this->readReschedule(nh);
 }
 

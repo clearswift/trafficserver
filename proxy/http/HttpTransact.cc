@@ -260,8 +260,13 @@ find_server_and_update_current_info(HttpTransact::State *s)
     // wanted it for all requests to local_host.
     s->parent_result.result = PARENT_DIRECT;
   } else if (s->method == HTTP_WKSIDX_CONNECT && s->http_config_param->disable_ssl_parenting) {
-    s->parent_params->findParent(&s->request_data, &s->parent_result, s->txn_conf->parent_fail_threshold,
-                                 s->txn_conf->parent_retry_time);
+    if (s->parent_result.result == PARENT_SPECIFIED) {
+      s->parent_params->nextParent(&s->request_data, &s->parent_result, s->txn_conf->parent_fail_threshold,
+                                   s->txn_conf->parent_retry_time);
+    } else {
+      s->parent_params->findParent(&s->request_data, &s->parent_result, s->txn_conf->parent_fail_threshold,
+                                   s->txn_conf->parent_retry_time);
+    }
     if (!s->parent_result.is_some() || s->parent_result.is_api_result() || s->parent_result.parent_is_proxy()) {
       DebugTxn("http_trans", "request not cacheable, so bypass parent");
       s->parent_result.result = PARENT_DIRECT;
@@ -274,8 +279,13 @@ find_server_and_update_current_info(HttpTransact::State *s)
     // we are assuming both child and parent have similar configuration
     // with respect to whether a request is cacheable or not.
     // For example, the cache_urls_that_look_dynamic variable.
-    s->parent_params->findParent(&s->request_data, &s->parent_result, s->txn_conf->parent_fail_threshold,
-                                 s->txn_conf->parent_retry_time);
+    if (s->parent_result.result == PARENT_SPECIFIED) {
+      s->parent_params->nextParent(&s->request_data, &s->parent_result, s->txn_conf->parent_fail_threshold,
+                                   s->txn_conf->parent_retry_time);
+    } else {
+      s->parent_params->findParent(&s->request_data, &s->parent_result, s->txn_conf->parent_fail_threshold,
+                                   s->txn_conf->parent_retry_time);
+    }
     if (!s->parent_result.is_some() || s->parent_result.is_api_result() || s->parent_result.parent_is_proxy()) {
       DebugTxn("http_trans", "request not cacheable, so bypass parent");
       s->parent_result.result = PARENT_DIRECT;
@@ -797,6 +807,8 @@ HttpTransact::EndRemapRequest(State *s)
     switch (s->http_return_code) {
     case HTTP_STATUS_MOVED_PERMANENTLY:
     case HTTP_STATUS_PERMANENT_REDIRECT:
+    case HTTP_STATUS_SEE_OTHER:
+    case HTTP_STATUS_USE_PROXY:
       error_body_type = "redirect#moved_permanently";
       break;
     case HTTP_STATUS_MOVED_TEMPORARILY:
@@ -1686,6 +1698,14 @@ HttpTransact::OSDNSLookup(State *s)
   DebugTxn("http_trans", "[HttpTransact::OSDNSLookup] This was attempt %d", s->dns_info.attempts);
   ++s->dns_info.attempts;
 
+  // It's never valid to connect *to* INADDR_ANY, so let's reject the request now.
+  if (ats_is_ip_any(s->host_db_info.ip())) {
+    DebugTxn("http_trans", "[OSDNSLookup] Invalid request IP: INADDR_ANY");
+    build_error_response(s, HTTP_STATUS_BAD_REQUEST, "Bad Destination Address", "request#syntax_error", nullptr);
+    SET_VIA_STRING(VIA_DETAIL_TUNNEL, VIA_DETAIL_TUNNEL_NO_FORWARD);
+    TRANSACT_RETURN(SM_ACTION_SEND_ERROR_CACHE_NOOP, nullptr);
+  }
+
   // detect whether we are about to self loop. the client may have
   // specified the proxy as the origin server (badness).
   // Check if this procedure is already done - YTS Team, yamsat
@@ -2360,8 +2380,9 @@ HttpTransact::issue_revalidate(State *s)
       // make this a conditional request
       int length;
       const char *str = c_resp->value_get(MIME_FIELD_LAST_MODIFIED, MIME_LEN_LAST_MODIFIED, &length);
-
-      s->hdr_info.server_request.value_set(MIME_FIELD_IF_MODIFIED_SINCE, MIME_LEN_IF_MODIFIED_SINCE, str, length);
+      if (str) {
+        s->hdr_info.server_request.value_set(MIME_FIELD_IF_MODIFIED_SINCE, MIME_LEN_IF_MODIFIED_SINCE, str, length);
+      }
       if (!s->cop_test_page)
         DUMP_HEADER("http_hdrs", &s->hdr_info.server_request, s->state_machine_id, "Proxy's Request (Conditionalized)");
     }
@@ -3599,6 +3620,7 @@ HttpTransact::handle_response_from_icp_suggested_host(State *s)
 void
 HttpTransact::handle_response_from_parent(State *s)
 {
+  LookingUp_t next_lookup = UNDEFINED_LOOKUP;
   DebugTxn("http_trans", "[handle_response_from_parent] (hrfp)");
   HTTP_RELEASE_ASSERT(s->current.server == &s->parent_info);
 
@@ -3630,122 +3652,116 @@ HttpTransact::handle_response_from_parent(State *s)
     }
     handle_forward_server_connection_open(s);
     break;
-  default: {
-    LookingUp_t next_lookup = UNDEFINED_LOOKUP;
-
-    if (s->current.state == PARENT_ORIGIN_RETRY) {
-      if (s->current.retry_type == PARENT_RETRY_SIMPLE) {
-        if (s->current.simple_retry_attempts >= s->parent_result.max_retries(PARENT_RETRY_SIMPLE)) {
-          DebugTxn("http_trans", "PARENT_RETRY_SIMPLE: retried all parents, send error to client.");
-          s->current.retry_type = PARENT_RETRY_NONE;
-        } else {
-          s->current.simple_retry_attempts++;
-          DebugTxn("http_trans", "PARENT_RETRY_SIMPLE: try another parent.");
-          s->current.retry_type = PARENT_RETRY_NONE;
-          next_lookup           = find_server_and_update_current_info(s);
-        }
-      } else if (s->current.retry_type == PARENT_RETRY_UNAVAILABLE_SERVER) {
-        if (s->current.unavailable_server_retry_attempts >= s->parent_result.max_retries(PARENT_RETRY_UNAVAILABLE_SERVER)) {
-          DebugTxn("http_trans", "PARENT_RETRY_UNAVAILABLE_SERVER: retried all parents, send error to client.");
-          s->current.retry_type = PARENT_RETRY_NONE;
-        } else {
-          s->current.unavailable_server_retry_attempts++;
-          DebugTxn("http_trans", "PARENT_RETRY_UNAVAILABLE_SERVER: marking parent down and trying another.");
-          s->current.retry_type = PARENT_RETRY_NONE;
-          HTTP_INCREMENT_DYN_STAT(http_total_parent_marked_down_count);
-          s->parent_params->markParentDown(&s->parent_result, s->txn_conf->parent_fail_threshold, s->txn_conf->parent_retry_time);
-          next_lookup = find_server_and_update_current_info(s);
-        }
+  case PARENT_ORIGIN_RETRY:
+    if (s->current.retry_type == PARENT_RETRY_SIMPLE) {
+      if (s->current.simple_retry_attempts >= s->parent_result.max_retries(PARENT_RETRY_SIMPLE)) {
+        DebugTxn("http_trans", "PARENT_RETRY_SIMPLE: retried all parents, send error to client.");
+        s->current.retry_type = PARENT_RETRY_NONE;
+      } else {
+        s->current.simple_retry_attempts++;
+        DebugTxn("http_trans", "PARENT_RETRY_SIMPLE: try another parent.");
+        s->current.retry_type = PARENT_RETRY_NONE;
+        next_lookup           = find_server_and_update_current_info(s);
       }
-    } else {
-      DebugTxn("http_trans", "[hrfp] connection not alive");
-      SET_VIA_STRING(VIA_DETAIL_PP_CONNECT, VIA_DETAIL_PP_FAILURE);
-
-      ink_assert(s->hdr_info.server_request.valid());
-
-      s->current.server->connect_result = ENOTCONN;
-      // only mark the parent down in hostdb if the configuration allows it,
-      // see proxy.config.http.parent_proxy.mark_down_hostdb in records.config.
-      if (s->txn_conf->parent_failures_update_hostdb) {
-        s->state_machine->do_hostdb_update_if_necessary();
-      }
-
-      char addrbuf[INET6_ADDRSTRLEN];
-      DebugTxn("http_trans", "[%d] failed to connect to parent %s", s->current.attempts,
-               ats_ip_ntop(&s->current.server->dst_addr.sa, addrbuf, sizeof(addrbuf)));
-
-      // If the request is not retryable, just give up!
-      if (!is_request_retryable(s)) {
+    } else if (s->current.retry_type == PARENT_RETRY_UNAVAILABLE_SERVER) {
+      if (s->current.unavailable_server_retry_attempts >= s->parent_result.max_retries(PARENT_RETRY_UNAVAILABLE_SERVER)) {
+        DebugTxn("http_trans", "PARENT_RETRY_UNAVAILABLE_SERVER: retried all parents, send error to client.");
+        s->current.retry_type = PARENT_RETRY_NONE;
+      } else {
+        s->current.unavailable_server_retry_attempts++;
+        DebugTxn("http_trans", "PARENT_RETRY_UNAVAILABLE_SERVER: marking parent down and trying another.");
+        s->current.retry_type = PARENT_RETRY_NONE;
         HTTP_INCREMENT_DYN_STAT(http_total_parent_marked_down_count);
         s->parent_params->markParentDown(&s->parent_result, s->txn_conf->parent_fail_threshold, s->txn_conf->parent_retry_time);
-        s->parent_result.result = PARENT_FAIL;
-        handle_parent_died(s);
-        return;
+        next_lookup = find_server_and_update_current_info(s);
       }
+    }
+    break;
+  default:
+    DebugTxn("http_trans", "[hrfp] connection not alive");
+    SET_VIA_STRING(VIA_DETAIL_PP_CONNECT, VIA_DETAIL_PP_FAILURE);
 
-      if (s->current.attempts < s->txn_conf->parent_connect_attempts) {
-        HTTP_INCREMENT_DYN_STAT(http_total_parent_retries_stat);
-        s->current.attempts++;
+    ink_assert(s->hdr_info.server_request.valid());
 
-        // Are we done with this particular parent?
-        if ((s->current.attempts - 1) % s->txn_conf->per_parent_connect_attempts != 0) {
-          // No we are not done with this parent so retry
-          HTTP_INCREMENT_DYN_STAT(http_total_parent_switches_stat);
-          s->next_action = how_to_open_connection(s);
-          DebugTxn("http_trans", "%s Retrying parent for attempt %d, max %" PRId64, "[handle_response_from_parent]",
-                   s->current.attempts, s->txn_conf->per_parent_connect_attempts);
-          return;
-        } else {
-          DebugTxn("http_trans", "%s %d per parent attempts exhausted", "[handle_response_from_parent]", s->current.attempts);
-          HTTP_INCREMENT_DYN_STAT(http_total_parent_retries_exhausted_stat);
+    s->current.server->connect_result = ENOTCONN;
+    // only mark the parent down in hostdb if the configuration allows it,
+    // see proxy.config.http.parent_proxy.mark_down_hostdb in records.config.
+    if (s->txn_conf->parent_failures_update_hostdb && s->current.state != CONGEST_CONTROL_CONGESTED_ON_F) {
+      s->state_machine->do_hostdb_update_if_necessary();
+    }
 
-          // Only mark the parent down if we failed to connect
-          //  to the parent otherwise slow origin servers cause
-          //  us to mark the parent down
-          if (s->current.state == CONNECTION_ERROR) {
-            HTTP_INCREMENT_DYN_STAT(http_total_parent_marked_down_count);
-            s->parent_params->markParentDown(&s->parent_result, s->txn_conf->parent_fail_threshold, s->txn_conf->parent_retry_time);
-          }
-          // We are done so look for another parent if any
-          next_lookup = find_server_and_update_current_info(s);
-        }
+    char addrbuf[INET6_ADDRSTRLEN];
+    DebugTxn("http_trans", "[%d] failed to connect to parent %s", s->current.attempts,
+             ats_ip_ntop(&s->current.server->dst_addr.sa, addrbuf, sizeof(addrbuf)));
+
+    // If the request is not retryable, just give up!
+    if (!is_request_retryable(s) && s->current.state != CONGEST_CONTROL_CONGESTED_ON_F) {
+      HTTP_INCREMENT_DYN_STAT(http_total_parent_marked_down_count);
+      s->parent_params->markParentDown(&s->parent_result, s->txn_conf->parent_fail_threshold, s->txn_conf->parent_retry_time);
+      s->parent_result.result = PARENT_FAIL;
+      handle_parent_died(s);
+      return;
+    }
+
+    if (s->current.attempts < s->txn_conf->parent_connect_attempts) {
+      HTTP_INCREMENT_DYN_STAT(http_total_parent_retries_stat);
+      s->current.attempts++;
+
+      // Are we done with this particular parent?
+      if ((s->current.attempts - 1) % s->txn_conf->per_parent_connect_attempts != 0) {
+        // No we are not done with this parent so retry
+        HTTP_INCREMENT_DYN_STAT(http_total_parent_switches_stat);
+        s->next_action = how_to_open_connection(s);
+        DebugTxn("http_trans", "%s Retrying parent for attempt %d, max %" PRId64, "[handle_response_from_parent]",
+                 s->current.attempts, s->txn_conf->per_parent_connect_attempts);
+        return;
       } else {
-        // Done trying parents... fail over to origin server if that is
-        //   appropriate
+        DebugTxn("http_trans", "%s %d per parent attempts exhausted", "[handle_response_from_parent]", s->current.attempts);
         HTTP_INCREMENT_DYN_STAT(http_total_parent_retries_exhausted_stat);
-        DebugTxn("http_trans", "[handle_response_from_parent] Error. No more retries.");
+
+        // Only mark the parent down if we failed to connect
+        //  to the parent otherwise slow origin servers cause
+        //  us to mark the parent down
         if (s->current.state == CONNECTION_ERROR) {
           HTTP_INCREMENT_DYN_STAT(http_total_parent_marked_down_count);
           s->parent_params->markParentDown(&s->parent_result, s->txn_conf->parent_fail_threshold, s->txn_conf->parent_retry_time);
         }
-        s->parent_result.result = PARENT_FAIL;
-        next_lookup             = find_server_and_update_current_info(s);
+        // We are done so look for another parent if any
+        next_lookup = find_server_and_update_current_info(s);
       }
+    } else {
+      // Done trying parents... fail over to origin server if that is
+      //   appropriate
+      HTTP_INCREMENT_DYN_STAT(http_total_parent_retries_exhausted_stat);
+      DebugTxn("http_trans", "[handle_response_from_parent] Error. No more retries.");
+      if (s->current.state == CONNECTION_ERROR) {
+        HTTP_INCREMENT_DYN_STAT(http_total_parent_marked_down_count);
+        s->parent_params->markParentDown(&s->parent_result, s->txn_conf->parent_fail_threshold, s->txn_conf->parent_retry_time);
+      }
+      s->parent_result.result = PARENT_FAIL;
+      next_lookup             = HOST_NONE;
     }
-
-    // We have either tried to find a new parent or failed over to the
-    //   origin server
-    switch (next_lookup) {
-    case PARENT_PROXY:
-      ink_assert(s->current.request_to == PARENT_PROXY);
-      TRANSACT_RETURN(SM_ACTION_DNS_LOOKUP, PPDNSLookup);
-      break;
-    case ORIGIN_SERVER:
-      // Next lookup is Origin Server, try DNS for Origin Server
-      TRANSACT_RETURN(SM_ACTION_DNS_LOOKUP, OSDNSLookup);
-      break;
-    case HOST_NONE:
-      handle_parent_died(s);
-      break;
-    default:
-      // This handles:
-      // UNDEFINED_LOOKUP, ICP_SUGGESTED_HOST,
-      // INCOMING_ROUTER
-      break;
-    }
-
-    break;
   }
+
+  // We have either tried to find a new parent or failed over to the
+  //   origin server
+  switch (next_lookup) {
+  case PARENT_PROXY:
+    ink_assert(s->current.request_to == PARENT_PROXY);
+    TRANSACT_RETURN(SM_ACTION_DNS_LOOKUP, PPDNSLookup);
+    break;
+  case ORIGIN_SERVER:
+    // Next lookup is Origin Server, try DNS for Origin Server
+    TRANSACT_RETURN(SM_ACTION_DNS_LOOKUP, OSDNSLookup);
+    break;
+  case HOST_NONE:
+    handle_parent_died(s);
+    break;
+  default:
+    // This handles:
+    // UNDEFINED_LOOKUP, ICP_SUGGESTED_HOST,
+    // INCOMING_ROUTER
+    break;
   }
 }
 
@@ -5352,7 +5368,7 @@ HttpTransact::add_client_ip_to_outgoing_request(State *s, HTTPHdr *request)
     bool client_ip_set = request->presence(MIME_PRESENCE_CLIENT_IP);
     DebugTxn("http_trans", "client_ip_set = %d", client_ip_set);
 
-    if (client_ip_set == true) {
+    if (client_ip_set == false) {
       request->value_set(MIME_FIELD_CLIENT_IP, MIME_LEN_CLIENT_IP, ip_string, ip_string_size);
       DebugTxn("http_trans", "inserted request header 'Client-ip: %s'", ip_string);
     }
@@ -6881,8 +6897,14 @@ HttpTransact::handle_content_length_header(State *s, HTTPHdr *header, HTTPHdr *b
     }
     DebugTxn("http_trans", "[handle_content_length_header] RESPONSE cont len in hdr is %" PRId64, header->get_content_length());
   } else {
-    // No content length header
-    if (s->source == SOURCE_CACHE) {
+    // No content length header.
+    // If the source is cache or server returned 304 response,
+    // we can try to get the content length based on object size.
+    // Also, we should check the scenario of server sending't  a unexpected 304 response for a non conditional request( no cached
+    // object )
+    if (s->source == SOURCE_CACHE ||
+        (s->source == SOURCE_HTTP_ORIGIN_SERVER && s->hdr_info.server_response.status_get() == HTTP_STATUS_NOT_MODIFIED &&
+         s->cache_info.object_read != nullptr)) {
       // If there is no content-length header, we can
       //   insert one since the cache knows definately
       //   how long the object is unless we're in a
@@ -6897,6 +6919,8 @@ HttpTransact::handle_content_length_header(State *s, HTTPHdr *header, HTTPHdr *b
       } else if (s->range_setup == RANGE_NOT_TRANSFORM_REQUESTED) {
         // if we are doing a single Range: request, calculate the new
         // C-L: header
+        // either the object is in cache or origin returned a 304 Not Modified response. We can still turn this into a proper Range
+        // response from the cached object.
         change_response_header_because_of_range_request(s, header);
         s->hdr_info.trust_response_cl = true;
       } else {
@@ -7630,7 +7654,7 @@ HttpTransact::what_is_document_freshness(State *s, HTTPHdr *client_request, HTTP
   // now, see if the age is "fresh enough" //
   ///////////////////////////////////////////
 
-  if (do_revalidate || current_age > age_limit) { // client-modified limit
+  if (do_revalidate || !age_limit || current_age > age_limit) { // client-modified limit
     DebugTxn("http_match", "[..._document_freshness] document needs revalidate/too old; "
                            "returning FRESHNESS_STALE");
     return (FRESHNESS_STALE);
@@ -7706,8 +7730,11 @@ void
 HttpTransact::handle_parent_died(State *s)
 {
   ink_assert(s->parent_result.result == PARENT_FAIL);
-
-  build_error_response(s, HTTP_STATUS_BAD_GATEWAY, "Next Hop Connection Failed", "connect#failed_connect", nullptr);
+  if (s->current.state == CONGEST_CONTROL_CONGESTED_ON_F) {
+    build_error_response(s, HTTP_STATUS_SERVICE_UNAVAILABLE, "Next Hop Congested ", "congestion#retryAfter", nullptr);
+  } else {
+    build_error_response(s, HTTP_STATUS_BAD_GATEWAY, "Next Hop Connection Failed", "connect#failed_connect", nullptr);
+  }
   TRANSACT_RETURN(SM_ACTION_SEND_ERROR_CACHE_NOOP, nullptr);
 }
 
@@ -8115,7 +8142,8 @@ HttpTransact::build_response(State *s, HTTPHdr *base_response, HTTPHdr *outgoing
   }
 
   // Add HSTS header (Strict-Transport-Security) if max-age is set and the request was https
-  if (s->orig_scheme == URL_WKSIDX_HTTPS && s->txn_conf->proxy_response_hsts_max_age >= 0) {
+  // and the incoming request was remapped correctly
+  if (s->orig_scheme == URL_WKSIDX_HTTPS && s->txn_conf->proxy_response_hsts_max_age >= 0 && s->url_remap_success == true) {
     DebugTxn("http_hdrs", "hsts max-age=%" PRId64, s->txn_conf->proxy_response_hsts_max_age);
     HttpTransactHeaders::insert_hsts_header_in_response(s, outgoing_response);
   }
@@ -8219,6 +8247,11 @@ HttpTransact::build_error_response(State *s, HTTPStatus status_code, const char 
   if ((s->state_machine->ua_session && s->state_machine->ua_session->is_outbound_transparent()) &&
       (status_code == HTTP_STATUS_INTERNAL_SERVER_ERROR || status_code == HTTP_STATUS_GATEWAY_TIMEOUT ||
        status_code == HTTP_STATUS_BAD_GATEWAY || status_code == HTTP_STATUS_SERVICE_UNAVAILABLE)) {
+    s->client_info.keep_alive = HTTP_NO_KEEPALIVE;
+  }
+
+  // If there is a parse error on reading the request it can leave reading the request stream in an undetermined state
+  if (status_code == HTTP_STATUS_BAD_REQUEST) {
     s->client_info.keep_alive = HTTP_NO_KEEPALIVE;
   }
 
@@ -8570,7 +8603,12 @@ HttpTransact::client_result_stat(State *s, ink_hrtime total_time, ink_hrtime req
   ///////////////////////////////////////////////////////
   // don't count errors we generated as hits or misses //
   ///////////////////////////////////////////////////////
-  if ((s->source == SOURCE_INTERNAL) && (s->hdr_info.client_response.status_get() >= 400)) {
+  int client_response_status = HTTP_STATUS_NONE;
+  if (s->hdr_info.client_response.valid()) {
+    client_response_status = s->hdr_info.client_response.status_get();
+  }
+
+  if ((s->source == SOURCE_INTERNAL) && client_response_status >= 400) {
     client_transaction_result = CLIENT_TRANSACTION_RESULT_ERROR_OTHER;
   }
 
@@ -8665,9 +8703,7 @@ HttpTransact::client_result_stat(State *s, ink_hrtime total_time, ink_hrtime req
   }
   // Count the status codes, assuming the client didn't abort (i.e. there is an m_http)
   if ((s->source != SOURCE_NONE) && (s->client_info.abort == DIDNOT_ABORT)) {
-    int status_code = s->hdr_info.client_response.status_get();
-
-    switch (status_code) {
+    switch (client_response_status) {
     case 100:
       HTTP_INCREMENT_DYN_STAT(http_response_status_100_count_stat);
       break;
@@ -8788,7 +8824,7 @@ HttpTransact::client_result_stat(State *s, ink_hrtime total_time, ink_hrtime req
     default:
       break;
     }
-    switch (status_code / 100) {
+    switch (client_response_status / 100) {
     case 1:
       HTTP_INCREMENT_DYN_STAT(http_response_status_1xx_count_stat);
       break;

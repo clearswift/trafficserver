@@ -269,8 +269,10 @@ def MakeATSProcess(obj, name, command='traffic_server', select_ports=True):
     p.Env['PROXY_CONFIG_ADMIN_AUTOCONF_PORT'] = str(
         p.Variables.admin_port)  # support pre ATS 6.x
 
-    # since we always kill this
-    p.ReturnCode = None
+    if command == "traffic_manager":
+        p.ReturnCode = 2
+    else:
+        p.ReturnCode = 0
 
     return p
 
@@ -304,7 +306,7 @@ class Config(File):
         if self.content is not None:
             with open(name, 'w') as f:
                 f.write(self.content)
-        return (False, "Appended file {0}".format(self.Name), "Success")
+        return (True, "Appended file {0}".format(self.Name), "Success")
 
     def AddLine(self, line):
         if not self._added:
@@ -345,11 +347,17 @@ class RecordsConfig(Config, dict):
         if len(self) > 0:
             with open(name, 'w') as f:
                 for name, val in self.items():
-                    f.write(self.line_template.format(name=name,
-                                                      kind=self.reverse_kind_map[
-                                                          type(val)],
-                                                      val=val))
-        return (False, "Writing config file {0}".format(os.path.split(self.Name)[-1]), "Success")
+                    f.write(
+                        self.line_template.format(
+                            name=name,
+                            kind=self.reverse_kind_map[type(val)],
+                            val=val)
+                    )
+        return (True,
+                "Writing config file {0}".format(os.path.split(self.Name)[-1]),
+                "Success")
+
+
 ##########################################################################
 
 

@@ -21,8 +21,7 @@
   limitations under the License.
  */
 
-#ifndef __PROXY_CLIENT_TRANSACTION_H__
-#define __PROXY_CLIENT_TRANSACTION_H__
+#pragma once
 
 #include "ProxyClientSession.h"
 #include <ts/MemView.h>
@@ -171,10 +170,6 @@ public:
   set_outbound_ip(const IpAddr &new_addr)
   {
   }
-  virtual void
-  clear_outbound()
-  {
-  }
   virtual bool
   is_outbound_transparent() const
   {
@@ -255,6 +250,11 @@ public:
     return parent ? parent->protocol_contains(tag_prefix) : nullptr;
   }
 
+  // This function must return a non-negative number that is different for two in-progress transactions with the same parent
+  // session.
+  //
+  virtual int get_transaction_id() const = 0;
+
 protected:
 protected:
   ProxyClientSession *parent;
@@ -268,5 +268,3 @@ protected:
 
 private:
 };
-
-#endif /* __PROXY_CLIENT_TRANSACTION_H__ */

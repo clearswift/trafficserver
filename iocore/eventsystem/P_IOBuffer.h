@@ -21,8 +21,7 @@
   limitations under the License.
  */
 
-#if !defined(_P_IOBuffer_h)
-#define _P_IOBuffer_h
+#pragma once
 
 #include "ts/ink_platform.h"
 #include "ts/ink_resource.h"
@@ -1123,6 +1122,7 @@ MIOBuffer::alloc(int64_t i)
 #endif
   _writer->alloc(i);
   size_index = i;
+  water_mark = 0;
   init_readers();
 }
 
@@ -1201,5 +1201,3 @@ TS_INLINE
 MIOBufferAccessor::~MIOBufferAccessor()
 {
 }
-
-#endif

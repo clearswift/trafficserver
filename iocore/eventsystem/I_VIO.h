@@ -22,7 +22,7 @@
 
  */
 
-#if !defined(I_VIO_h)
+#pragma once
 #define I_VIO_h
 
 #include "ts/ink_platform.h"
@@ -140,6 +140,9 @@ public:
   */
   inkcoreapi void reenable_re();
 
+  void disable();
+  bool is_disabled();
+
   VIO(int aop);
   VIO();
 
@@ -219,7 +222,9 @@ public:
 
   */
   Ptr<ProxyMutex> mutex;
+
+private:
+  bool _disabled = false;
 };
 
 #include "I_VConnection.h"
-#endif

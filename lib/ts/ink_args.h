@@ -26,8 +26,7 @@ Process arguments
 
 ****************************************************************************/
 
-#ifndef _INK_ARGS_H
-#define _INK_ARGS_H
+#pragma once
 #include "ts/ink_defs.h"
 #include "ts/ink_apidefs.h"
 
@@ -75,6 +74,10 @@ struct ArgumentDescription {
   {                                                                          \
     "help", 'h', "Print usage information", nullptr, nullptr, nullptr, usage \
   }
+#define RUNROOT_ARGUMENT_DESCRIPTION()                                                 \
+  {                                                                                    \
+    "run-root", '-', "using TS_RUNROOT as sandbox", nullptr, nullptr, nullptr, nullptr \
+  }
 
 /* Global Data
 */
@@ -95,5 +98,3 @@ void process_args(const AppVersionInfo *appinfo, const ArgumentDescription *argu
 
 bool process_args_ex(const AppVersionInfo *appinfo, const ArgumentDescription *argument_descriptions,
                      unsigned n_argument_descriptions, const char **argv);
-
-#endif /*_INK_ARGS_H*/

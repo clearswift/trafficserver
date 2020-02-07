@@ -22,6 +22,7 @@
 #include "P_OCSPStapling.h"
 #ifdef HAVE_OPENSSL_OCSP_STAPLING
 
+#include <openssl/ssl.h>
 #include <openssl/ocsp.h>
 #include "P_Net.h"
 #include "P_SSLConfig.h"
@@ -73,11 +74,24 @@ ssl_stapling_ex_init()
 static X509 *
 stapling_get_issuer(SSL_CTX *ssl_ctx, X509 *x)
 {
-  X509 *issuer = nullptr;
-  int i;
-  X509_STORE *st = SSL_CTX_get_cert_store(ssl_ctx);
-  X509_STORE_CTX inctx;
+  X509 *issuer                = nullptr;
+  X509_STORE *st              = SSL_CTX_get_cert_store(ssl_ctx);
   STACK_OF(X509) *extra_certs = nullptr;
+  X509_STORE_CTX *inctx       = X509_STORE_CTX_new();
+
+  if (inctx == nullptr) {
+    return nullptr;
+  }
+
+#ifdef SSL_CTX_select_current_cert
+  if (!SSL_CTX_select_current_cert(ssl_ctx, x)) {
+    Warning("OCSP: could not select current certifcate chain %p", x);
+  }
+#endif
+
+  if (X509_STORE_CTX_init(inctx, st, nullptr, nullptr) == 0) {
+    goto end;
+  }
 
 #ifdef SSL_CTX_get_extra_chain_certs
   SSL_CTX_get_extra_chain_certs(ssl_ctx, &extra_certs);
@@ -85,22 +99,29 @@ stapling_get_issuer(SSL_CTX *ssl_ctx, X509 *x)
   extra_certs = ssl_ctx->extra_certs;
 #endif
 
-  if (sk_X509_num(extra_certs) == 0)
-    return nullptr;
+  if (sk_X509_num(extra_certs) == 0) {
+    goto end;
+  }
 
-  for (i = 0; i < sk_X509_num(extra_certs); i++) {
+  for (int i = 0; i < sk_X509_num(extra_certs); i++) {
     issuer = sk_X509_value(extra_certs, i);
     if (X509_check_issued(issuer, x) == X509_V_OK) {
+#if OPENSSL_VERSION_NUMBER < 0x10100000
       CRYPTO_add(&issuer->references, 1, CRYPTO_LOCK_X509);
       return issuer;
+#else
+      X509_up_ref(issuer);
+      goto end;
+#endif
     }
   }
 
-  if (!X509_STORE_CTX_init(&inctx, st, nullptr, nullptr))
-    return nullptr;
-  if (X509_STORE_CTX_get1_issuer(&issuer, &inctx, x) <= 0)
+  if (X509_STORE_CTX_get1_issuer(&issuer, inctx, x) <= 0) {
     issuer = nullptr;
-  X509_STORE_CTX_cleanup(&inctx);
+  }
+
+end:
+  X509_STORE_CTX_free(inctx);
 
   return issuer;
 }
@@ -138,30 +159,48 @@ ssl_stapling_init_cert(SSL_CTX *ctx, X509 *cert, const char *certname)
   cinf->is_expire   = true;
   cinf->expire_time = 0;
 
-  SSL_CTX_set_ex_data(ctx, ssl_stapling_index, cinf);
-
   issuer = stapling_get_issuer(ctx, cert);
   if (issuer == nullptr) {
     Note("cannot get issuer certificate from %s", certname);
-    return false;
+    goto err;
   }
 
   cinf->cid = OCSP_cert_to_id(nullptr, cert, issuer);
-  if (!cinf->cid)
-    return false;
+  if (!cinf->cid) {
+    goto err;
+  }
+
   X509_digest(cert, EVP_sha1(), cinf->idx, nullptr);
 
   aia = X509_get1_ocsp(cert);
-  if (aia)
+  if (aia) {
     cinf->uri = sk_OPENSSL_STRING_pop(aia);
-  if (!cinf->uri) {
-    Note("no responder URI for %s", certname);
-  }
-  if (aia)
     X509_email_free(aia);
+  }
 
-  Note("successfully initialized certinfo for %s into SSL_CTX: %p", certname, ctx);
+  if (!cinf->uri) {
+    Note("no OCSP responder URI for %s", certname);
+    goto err;
+  }
+
+  SSL_CTX_set_ex_data(ctx, ssl_stapling_index, cinf);
+
+  Note("successfully initialized stapling for %s into SSL_CTX: %p", certname, ctx);
   return true;
+
+err:
+  if (cinf->uri) {
+    OCSP_CERTID_free(cinf->cid);
+  }
+
+  if (cinf->certname) {
+    ats_free(cinf->certname);
+  }
+
+  if (cinf) {
+    OPENSSL_free(cinf);
+  }
+  return false;
 }
 
 static certinfo *
@@ -294,7 +333,7 @@ process_responder(OCSP_REQUEST *req, char *host, char *path, char *port, int req
 
   BIO_set_nbio(cbio, 1);
   if (BIO_do_connect(cbio) <= 0 && !BIO_should_retry(cbio)) {
-    Error("process_responder: failed to connect to OCSP response server. host=%s port=%s path=%s", host, port, path);
+    Debug("ssl_ocsp", "process_responder: failed to connect to OCSP response server. host=%s port=%s path=%s", host, port, path);
     goto end;
   }
   resp = query_responder(cbio, host, path, req, req_timeout);
@@ -311,7 +350,7 @@ stapling_refresh_response(certinfo *cinf, OCSP_RESPONSE **prsp)
   bool rv           = true;
   OCSP_REQUEST *req = nullptr;
   OCSP_CERTID *id   = nullptr;
-  char *host, *path, *port;
+  char *host = nullptr, *port = nullptr, *path = nullptr;
   int ssl_flag    = 0;
   int req_timeout = -1;
 
@@ -351,18 +390,22 @@ stapling_refresh_response(certinfo *cinf, OCSP_RESPONSE **prsp)
   } else {
     Debug("ssl_ocsp", "stapling_refresh_response: successful refresh OCSP response");
   }
+  goto done;
+
+err:
+  rv = false;
+  Error("stapling_refresh_response: failed to refresh OCSP response");
 
 done:
   if (req)
     OCSP_REQUEST_free(req);
   if (*prsp)
     OCSP_RESPONSE_free(*prsp);
-  return rv;
 
-err:
-  rv = false;
-  Error("stapling_refresh_response: failed to refresh OCSP response");
-  goto done;
+  OPENSSL_free(host);
+  OPENSSL_free(path);
+  OPENSSL_free(port);
+  return rv;
 }
 
 void
@@ -413,7 +456,7 @@ ssl_callback_ocsp_stapling(SSL *ssl)
   // originally was, cinf = stapling_get_cert_info(ssl->ctx);
   cinf = stapling_get_cert_info(SSL_get_SSL_CTX(ssl));
   if (cinf == nullptr) {
-    Error("ssl_callback_ocsp_stapling: failed to get certificate information");
+    Debug("ssl_ocsp", "ssl_callback_ocsp_stapling: failed to get certificate information");
     return SSL_TLSEXT_ERR_NOACK;
   }
 
@@ -421,7 +464,7 @@ ssl_callback_ocsp_stapling(SSL *ssl)
   current_time = time(nullptr);
   if (cinf->resp_derlen == 0 || cinf->is_expire || cinf->expire_time < current_time) {
     ink_mutex_release(&cinf->stapling_mutex);
-    Error("ssl_callback_ocsp_stapling: failed to get certificate status for %s", cinf->certname);
+    Debug("ssl_ocsp", "ssl_callback_ocsp_stapling: failed to get certificate status for %s", cinf->certname);
     return SSL_TLSEXT_ERR_NOACK;
   } else {
     unsigned char *p = (unsigned char *)OPENSSL_malloc(cinf->resp_derlen);

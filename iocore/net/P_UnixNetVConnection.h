@@ -29,8 +29,7 @@
 
  ****************************************************************************/
 
-#ifndef __P_UNIXNETVCONNECTION_H__
-#define __P_UNIXNETVCONNECTION_H__
+#pragma once
 
 #include "ts/ink_sock.h"
 #include "I_NetVConnection.h"
@@ -156,6 +155,7 @@ public:
   void cancel_active_timeout() override;
   void cancel_inactivity_timeout() override;
   void set_action(Continuation *c) override;
+  const Action *get_action() const;
   void add_to_keep_alive_queue() override;
   void remove_from_keep_alive_queue() override;
   bool add_to_active_queue() override;
@@ -231,6 +231,12 @@ public:
   getSSLHandShakeComplete() const
   {
     return (true);
+  }
+
+  virtual bool
+  trackFirstHandshake()
+  {
+    return false;
   }
 
   virtual void net_read_io(NetHandler *nh, EThread *lthread);
@@ -449,41 +455,6 @@ UnixNetVConnection::set_tcp_init_cwnd(int init_cwnd)
 #endif
 }
 
-TS_INLINE int
-UnixNetVConnection::set_tcp_congestion_control(int side)
-{
-#ifdef TCP_CONGESTION
-  RecString congestion_control;
-  int ret;
-
-  if (side == CLIENT_SIDE) {
-    ret = REC_ReadConfigStringAlloc(congestion_control, "proxy.config.net.tcp_congestion_control_in");
-  } else {
-    ret = REC_ReadConfigStringAlloc(congestion_control, "proxy.config.net.tcp_congestion_control_out");
-  }
-
-  if (ret == REC_ERR_OKAY) {
-    int len = strlen(congestion_control);
-    if (len > 0) {
-      int rv = 0;
-      rv     = setsockopt(con.fd, IPPROTO_TCP, TCP_CONGESTION, reinterpret_cast<void *>(congestion_control), len);
-      if (rv < 0) {
-        Error("Unable to set TCP congestion control on socket %d to \"%.*s\", errno=%d (%s)", con.fd, len, congestion_control,
-              errno, strerror(errno));
-      } else {
-        Debug("socket", "Setting TCP congestion control on socket [%d] to \"%.*s\" -> %d", con.fd, len, congestion_control, rv);
-      }
-    }
-    ats_free(congestion_control);
-    return 0;
-  }
-  return -1;
-#else
-  Debug("socket", "Setting TCP congestion control is not supported on this platform.");
-  return -1;
-#endif
-}
-
 TS_INLINE UnixNetVConnection::~UnixNetVConnection()
 {
 }
@@ -500,10 +471,14 @@ UnixNetVConnection::set_action(Continuation *c)
   action_ = c;
 }
 
+TS_INLINE const Action *
+UnixNetVConnection::get_action() const
+{
+  return &action_;
+}
+
 // declarations for local use (within the net module)
 
 void close_UnixNetVConnection(UnixNetVConnection *vc, EThread *t);
 void write_to_net(NetHandler *nh, UnixNetVConnection *vc, EThread *thread);
 void write_to_net_io(NetHandler *nh, UnixNetVConnection *vc, EThread *thread);
-
-#endif

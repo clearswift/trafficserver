@@ -30,8 +30,7 @@
 
  ****************************************************************************/
 
-#ifndef _HTTP_SESSION_MANAGER_H_
-#define _HTTP_SESSION_MANAGER_H_
+#pragma once
 
 #include "P_EventSystem.h"
 #include "HttpServerSession.h"
@@ -167,5 +166,3 @@ private:
 };
 
 extern HttpSessionManager httpSessionManager;
-
-#endif

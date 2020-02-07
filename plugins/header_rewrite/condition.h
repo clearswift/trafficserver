@@ -19,8 +19,7 @@
 //
 // Implement the classes for the various types of hash keys we support.
 //
-#ifndef __CONDITION_H__
-#define __CONDITION_H__ 1
+#pragma once
 
 #include <string>
 
@@ -51,6 +50,12 @@ public:
   Condition() : _qualifier(""), _cond_op(MATCH_EQUAL), _matcher(NULL), _mods(COND_NONE)
   {
     TSDebug(PLUGIN_NAME_DBG, "Calling CTOR for Condition");
+  }
+
+  virtual ~Condition()
+  {
+    TSDebug(PLUGIN_NAME_DBG, "Calling DTOR for Condition");
+    delete _matcher;
   }
 
   // Inline this, it's critical for speed (and only used twice)
@@ -130,5 +135,3 @@ private:
 
   CondModifiers _mods;
 };
-
-#endif // __CONDITION_H

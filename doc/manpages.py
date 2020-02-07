@@ -20,7 +20,7 @@ import os
 man_pages = [
     # Add all files in the reference/api directory to the list of manual
     # pages
-    ('developer-guide/api/functions/' + filename[:-4], filename.split('.', 1)[0], '', None, '3ts') for filename in os.listdir('developer-guide/api/functions/') if filename != 'index.en.rst' and filename.endswith('.rst')] + [
+    ('developer-guide/api/functions/' + filename[:-4], filename.split('.', 1)[0], filename.split('.', 1)[0] + ' API function', None, '3ts') for filename in os.listdir('developer-guide/api/functions/') if filename != 'index.en.rst' and filename.endswith('.rst')] + [
 
     ('appendices/command-line/traffic_cop.en', 'traffic_cop', u'Traffic Server watchdog', None, '8'),
     ('appendices/command-line/traffic_ctl.en', 'traffic_ctl', u'Traffic Server command line tool', None, '8'),
@@ -66,4 +66,4 @@ if __name__ == '__main__':
     # Print the names of the man pages for the requested manual section.
     for page in man_pages:
         if options.section == 0 or options.section == int(page[4][0]):
-            print page[1] + '.' + page[4]
+            print(page[1] + '.' + page[4])

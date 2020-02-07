@@ -26,6 +26,8 @@
 #include "Http2ClientSession.h"
 #include "../http/HttpSM.h"
 
+#include <numeric>
+
 #define Http2StreamDebug(fmt, ...) \
   DebugSsn(parent, "http2_stream", "[%" PRId64 "] [%u] " fmt, parent->connection_id(), this->get_id(), ##__VA_ARGS__);
 
@@ -308,8 +310,11 @@ Http2Stream::do_io_write(Continuation *c, int64_t nbytes, IOBufferReader *abuffe
   write_vio.ndone     = 0;
   write_vio.vc_server = this;
   write_vio.op        = VIO::WRITE;
-  response_reader     = response_buffer.alloc_reader();
-  return update_write_request(abuffer, nbytes, false) ? &write_vio : nullptr;
+  response_reader     = abuffer;
+
+  update_write_request(abuffer, nbytes, false);
+
+  return &write_vio;
 }
 
 // Initiated from SM
@@ -432,8 +437,9 @@ Http2Stream::initiating_close()
       SCOPED_MUTEX_LOCK(lock, current_reader->mutex, this_ethread());
       current_reader->handleEvent(VC_EVENT_ERROR);
     } else if (!sent_write_complete) {
-      // Transaction is already gone.  Kill yourself
+      // Transaction is already gone or not started. Kill yourself
       do_io_close();
+      destroy();
     }
   }
 }
@@ -512,12 +518,18 @@ Http2Stream::update_read_request(int64_t read_len, bool call_update)
   }
 }
 
-bool
+void
+Http2Stream::restart_sending()
+{
+  this->send_response_body(true);
+}
+
+void
 Http2Stream::update_write_request(IOBufferReader *buf_reader, int64_t write_len, bool call_update)
 {
-  bool retval = true;
-  if (!this->is_client_state_writeable() || closed || parent == nullptr || write_vio.mutex == nullptr) {
-    return retval;
+  if (!this->is_client_state_writeable() || closed || parent == nullptr || write_vio.mutex == nullptr ||
+      (buf_reader == nullptr && write_len == 0)) {
+    return;
   }
   if (this->get_thread() != this_ethread()) {
     SCOPED_MUTEX_LOCK(stream_lock, this->mutex, this_ethread());
@@ -525,142 +537,148 @@ Http2Stream::update_write_request(IOBufferReader *buf_reader, int64_t write_len,
       // Send to the right thread
       cross_thread_event = this->get_thread()->schedule_imm(this, VC_EVENT_WRITE_READY, nullptr);
     }
-    return retval;
+    return;
   }
   ink_release_assert(this->get_thread() == this_ethread());
   Http2ClientSession *parent = static_cast<Http2ClientSession *>(this->get_parent());
-  // Copy over data in the abuffer into resp_buffer.  Then schedule a WRITE_READY or
-  // WRITE_COMPLETE event
+
   SCOPED_MUTEX_LOCK(lock, write_vio.mutex, this_ethread());
-  int64_t total_added = 0;
+
+  // if response is chunked, limit the dechunked_buffer size.
+  bool is_done = false;
+  if (this->chunked) {
+    if (chunked_handler.dechunked_buffer && chunked_handler.dechunked_buffer->max_read_avail() > HTTP2_MAX_BUFFER_USAGE) {
+      if (buffer_full_write_event == nullptr) {
+        buffer_full_write_event = get_thread()->schedule_imm(this, VC_EVENT_WRITE_READY);
+      }
+    } else {
+      this->response_process_data(is_done);
+    }
+  }
+
+  if (this->response_get_data_reader() == nullptr) {
+    return;
+  }
+  int64_t bytes_avail = this->response_get_data_reader()->read_avail();
   if (write_vio.nbytes > 0 && write_vio.ntodo() > 0) {
     int64_t num_to_write = write_vio.ntodo();
     if (num_to_write > write_len) {
       num_to_write = write_len;
     }
-    int64_t bytes_avail = buf_reader->read_avail();
     if (bytes_avail > num_to_write) {
       bytes_avail = num_to_write;
     }
-
-    if (static_cast<Http2ClientSession *>(parent)->write_buffer_size() > HTTP2_MAX_BUFFER_USAGE ||
-        response_buffer.max_read_avail() > HTTP2_MAX_BUFFER_USAGE ||
-        (chunked_handler.dechunked_buffer && chunked_handler.dechunked_buffer->max_read_avail() > HTTP2_MAX_BUFFER_USAGE)) {
-      if (buffer_full_write_event == nullptr) {
-        buffer_full_write_event = get_thread()->schedule_imm(this, VC_EVENT_WRITE_READY);
-      }
-      return true;
-    }
-
-    while (total_added < bytes_avail) {
-      int64_t bytes_added = response_buffer.write(buf_reader, bytes_avail);
-      buf_reader->consume(bytes_added);
-      total_added += bytes_added;
-    }
   }
 
-  IOBufferReader *response_reader = this->response_get_data_reader();
-  int64_t response_buffer_size    = response_reader->read_avail();
-  Http2StreamDebug("write_vio.nbytes=%" PRId64 ", write_vio.ndone=%" PRId64 ", buf_reader.read_avail=%" PRId64
-                   ", total_added=%" PRId64 ", response_buffer=%" PRId64,
-                   write_vio.nbytes, write_vio.ndone, buf_reader->read_avail(), total_added, response_buffer_size);
+  Http2StreamDebug("write_vio.nbytes=%" PRId64 ", write_vio.ndone=%" PRId64 ", write_vio.write_avail=%" PRId64
+                   ", reader.read_avail=%" PRId64,
+                   write_vio.nbytes, write_vio.ndone, write_vio.get_writer()->write_avail(), bytes_avail);
 
-  bool is_done = false;
-  this->response_process_data(is_done);
-  if (total_added > 0 || is_done) {
-    int send_event = (write_vio.ntodo() == response_buffer_size || is_done) ? VC_EVENT_WRITE_COMPLETE : VC_EVENT_WRITE_READY;
+  if (bytes_avail <= 0 && !is_done) {
+    return;
+  }
 
-    // Process the new data
-    if (!this->response_header_done) {
-      // Still parsing the response_header
-      int bytes_used = 0;
-      int state      = this->response_header.parse_resp(&http_parser, this->response_reader, &bytes_used, false);
-      // HTTPHdr::parse_resp() consumed the response_reader in above
-      write_vio.ndone += this->response_header.length_get();
+  // Process the new data
+  if (!this->response_header_done) {
+    // Still parsing the response_header
+    int bytes_used = 0;
+    int state      = this->response_header.parse_resp(&http_parser, this->response_reader, &bytes_used, false);
+    // HTTPHdr::parse_resp() consumed the response_reader in above
+    write_vio.ndone += this->response_header.length_get();
 
-      switch (state) {
-      case PARSE_RESULT_DONE: {
-        this->response_header_done = true;
+    switch (state) {
+    case PARSE_RESULT_DONE: {
+      this->response_header_done = true;
 
+      {
+        SCOPED_MUTEX_LOCK(lock, parent->connection_state.mutex, this_ethread());
         // Send the response header back
         parent->connection_state.send_headers_frame(this);
+      }
 
-        // See if the response is chunked.  Set up the dechunking logic if it is
-        // Make sure to check if the chunk is complete and signal appropriately
-        this->response_initialize_data_handling(is_done);
+      // See if the response is chunked.  Set up the dechunking logic if it is
+      // Make sure to check if the chunk is complete and signal appropriately
+      this->response_initialize_data_handling(is_done);
+
+      // If there is additional data, send it along in a data frame.  Or if this was header only
+      // make sure to send the end of stream
+      is_done |= (write_vio.ntodo() + this->response_header.length_get()) == bytes_avail;
+      if (this->response_is_data_available() || is_done) {
         if (is_done) {
-          send_event = VC_EVENT_WRITE_COMPLETE;
+          this->mark_body_done();
         }
 
-        // If there is additional data, send it along in a data frame.  Or if this was header only
-        // make sure to send the end of stream
-        if (this->response_is_data_available() || send_event == VC_EVENT_WRITE_COMPLETE) {
-          if (send_event != VC_EVENT_WRITE_COMPLETE) {
-            send_response_body();
-            // As with update_read_request, should be safe to call handler directly here if
-            // call_update is true.  Commented out for now while tracking a performance regression
-            if (call_update) { // Coming from reenable.  Safe to call the handler directly
-              if (write_vio._cont && this->current_reader)
-                write_vio._cont->handleEvent(send_event, &write_vio);
-            } else { // Called from do_io_write.  Might still be setting up state.  Send an event to let the dust settle
-              write_event = send_tracked_event(write_event, send_event, &write_vio);
-            }
-          } else {
-            this->mark_body_done();
-            // Send the data frame
-            send_response_body();
-          }
-        }
-        break;
+        this->send_response_body(call_update);
       }
-      case PARSE_RESULT_CONT:
-        // Let it ride for next time
-        break;
-      default:
-        break;
-      }
-    } else {
-      if (send_event == VC_EVENT_WRITE_COMPLETE) {
-        // Defer sending the write complete until the send_data_frame has sent it all
-        // this_ethread()->schedule_imm(this, send_event, &write_vio);
-        this->mark_body_done();
-        send_response_body();
-        retval = false;
-      } else {
-        send_response_body();
-        if (call_update) { // Coming from reenable.  Safe to call the handler directly
-          if (write_vio._cont && this->current_reader)
-            write_vio._cont->handleEvent(send_event, &write_vio);
-        } else { // Called from do_io_write.  Might still be setting up state.  Send an event to let the dust settle
-          write_event = send_tracked_event(write_event, send_event, &write_vio);
-        }
-      }
+      break;
+    }
+    case PARSE_RESULT_CONT:
+      // Let it ride for next time
+      break;
+    default:
+      break;
+    }
+  } else {
+    if (write_vio.ntodo() == bytes_avail || is_done) {
+      this->mark_body_done();
     }
 
-    Http2StreamDebug("write update (event=%d)", send_event);
+    this->send_response_body(call_update);
   }
 
-  return retval;
+  return;
+}
+
+void
+Http2Stream::signal_write_event(bool call_update)
+{
+  if (this->write_vio._cont == nullptr || this->write_vio.op == VIO::NONE) {
+    return;
+  }
+
+  if (this->write_vio.get_writer()->write_avail() == 0) {
+    return;
+  }
+
+  int send_event = this->write_vio.ntodo() == 0 ? VC_EVENT_WRITE_COMPLETE : VC_EVENT_WRITE_READY;
+
+  if (call_update) {
+    // Coming from reenable.  Safe to call the handler directly
+    if (write_vio._cont && this->current_reader) {
+      write_vio._cont->handleEvent(send_event, &write_vio);
+    }
+  } else {
+    // Called from do_io_write. Might still be setting up state. Send an event to let the dust settle
+    write_event = send_tracked_event(write_event, send_event, &write_vio);
+  }
 }
 
 void
 Http2Stream::push_promise(URL &url, const MIMEField *accept_encoding)
 {
   Http2ClientSession *parent = static_cast<Http2ClientSession *>(this->get_parent());
+  SCOPED_MUTEX_LOCK(lock, parent->connection_state.mutex, this_ethread());
   parent->connection_state.send_push_promise_frame(this, url, accept_encoding);
 }
 
 void
-Http2Stream::send_response_body()
+Http2Stream::send_response_body(bool call_update)
 {
   Http2ClientSession *parent = static_cast<Http2ClientSession *>(this->get_parent());
+  inactive_timeout_at        = Thread::get_hrtime() + inactive_timeout;
 
   if (Http2::stream_priority_enabled) {
+    SCOPED_MUTEX_LOCK(lock, parent->connection_state.mutex, this_ethread());
     parent->connection_state.schedule_stream(this);
+    // signal_write_event() will be called from `Http2ConnectionState::send_data_frames_depends_on_priority()`
+    // when write_vio is consumed
   } else {
+    SCOPED_MUTEX_LOCK(lock, parent->connection_state.mutex, this_ethread());
     parent->connection_state.send_data_frames(this);
+    this->signal_write_event(call_update);
+    // XXX The call to signal_write_event can destroy/free the Http2Stream.
+    // Don't modify the Http2Stream after calling this method.
   }
-  inactive_timeout_at = Thread::get_hrtime() + inactive_timeout;
 }
 
 void
@@ -709,7 +727,6 @@ Http2Stream::destroy()
 
   // Drop references to all buffer data
   request_buffer.clear();
-  response_buffer.clear();
 
   // Free the mutexes in the VIO
   read_vio.mutex.clear();
@@ -719,10 +736,10 @@ Http2Stream::destroy()
     ats_free(header_blocks);
   }
   chunked_handler.clear();
-  super::destroy();
   clear_timers();
   clear_io_events();
 
+  super::destroy();
   THREAD_FREE(this, http2StreamAllocator, this_ethread());
 }
 
@@ -873,4 +890,61 @@ Http2Stream::release(IOBufferReader *r)
   super::release(r);
   current_reader = nullptr; // State machine is on its own way down.
   this->do_io_close();
+}
+
+ssize_t
+Http2Stream::client_rwnd() const
+{
+  return this->_client_rwnd;
+}
+
+Http2ErrorCode
+Http2Stream::increment_client_rwnd(size_t amount)
+{
+  this->_client_rwnd += amount;
+
+  this->_recent_rwnd_increment[this->_recent_rwnd_increment_index] = amount;
+  ++this->_recent_rwnd_increment_index;
+  this->_recent_rwnd_increment_index %= this->_recent_rwnd_increment.size();
+  double sum = std::accumulate(this->_recent_rwnd_increment.begin(), this->_recent_rwnd_increment.end(), 0.0);
+  double avg = sum / this->_recent_rwnd_increment.size();
+  if (avg < Http2::min_avg_window_update) {
+    return Http2ErrorCode::HTTP2_ERROR_ENHANCE_YOUR_CALM;
+  }
+  return Http2ErrorCode::HTTP2_ERROR_NO_ERROR;
+}
+
+Http2ErrorCode
+Http2Stream::decrement_client_rwnd(size_t amount)
+{
+  this->_client_rwnd -= amount;
+  if (this->_client_rwnd < 0) {
+    return Http2ErrorCode::HTTP2_ERROR_PROTOCOL_ERROR;
+  } else {
+    return Http2ErrorCode::HTTP2_ERROR_NO_ERROR;
+  }
+}
+
+ssize_t
+Http2Stream::server_rwnd() const
+{
+  return this->_server_rwnd;
+}
+
+Http2ErrorCode
+Http2Stream::increment_server_rwnd(size_t amount)
+{
+  this->_server_rwnd += amount;
+  return Http2ErrorCode::HTTP2_ERROR_NO_ERROR;
+}
+
+Http2ErrorCode
+Http2Stream::decrement_server_rwnd(size_t amount)
+{
+  this->_server_rwnd -= amount;
+  if (this->_server_rwnd < 0) {
+    return Http2ErrorCode::HTTP2_ERROR_PROTOCOL_ERROR;
+  } else {
+    return Http2ErrorCode::HTTP2_ERROR_NO_ERROR;
+  }
 }

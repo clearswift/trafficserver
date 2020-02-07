@@ -40,6 +40,10 @@ int net_accept_period       = 10;
 int net_retry_delay         = 10;
 int net_throttle_delay      = 50; /* milliseconds */
 
+// For the in/out congestion control: ToDo: this probably would be better as ports: specifications
+ts::string_view net_ccp_in;
+ts::string_view net_ccp_out;
+
 static inline void
 configure_net()
 {
@@ -52,6 +56,20 @@ configure_net()
   // These are not reloadable
   REC_ReadConfigInteger(net_event_period, "proxy.config.net.event_period");
   REC_ReadConfigInteger(net_accept_period, "proxy.config.net.accept_period");
+
+  // This is kinda fugly, but better than it was before (on every connection in and out)
+  // Note that these would need to be ats_free()'d if we ever want to clean that up, but
+  // we have no good way of dealing with that on such globals I think?
+  RecString ccp;
+
+  REC_ReadConfigStringAlloc(ccp, "proxy.config.net.tcp_congestion_control_in");
+  if (ccp && *ccp != '\0') {
+    net_ccp_in = {ccp};
+  }
+  REC_ReadConfigStringAlloc(ccp, "proxy.config.net.tcp_congestion_control_out");
+  if (ccp && *ccp != '\0') {
+    net_ccp_out = {ccp};
+  }
 }
 
 static inline void
@@ -108,6 +126,11 @@ register_net_stats()
   NET_CLEAR_DYN_STAT(keep_alive_queue_timeout_total_stat);
   NET_CLEAR_DYN_STAT(keep_alive_queue_timeout_count_stat);
   NET_CLEAR_DYN_STAT(default_inactivity_timeout_stat);
+
+  RecRegisterRawStat(net_rsb, RECT_PROCESS, "proxy.process.net.connections_throttled_in", RECD_INT, RECP_PERSISTENT,
+                     (int)net_connections_throttled_in_stat, RecRawStatSyncSum);
+  RecRegisterRawStat(net_rsb, RECT_PROCESS, "proxy.process.net.connections_throttled_out", RECD_INT, RECP_PERSISTENT,
+                     (int)net_connections_throttled_out_stat, RecRawStatSyncSum);
 }
 
 void

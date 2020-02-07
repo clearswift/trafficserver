@@ -33,8 +33,7 @@
 
  ****************************************************************************/
 
-#ifndef _PLUGIN_VC_H_
-#define _PLUGIN_VC_H_
+#pragma once
 
 #include "Plugin.h"
 #include "P_Net.h"
@@ -152,6 +151,10 @@ private:
   void process_write_side(bool);
   void process_close();
   void process_timeout(Event **e, int event_to_send);
+
+  // Clear the Event pointer pointed to by e
+  // Cancel the action first if it is a periodic event
+  void clear_event(Event **e);
 
   void setup_event_cb(ink_hrtime in, Event **e_ptr);
 
@@ -281,5 +284,3 @@ inline PluginVCCore::PluginVCCore()
 
   id = ink_atomic_increment(&nextid, 1);
 }
-
-#endif

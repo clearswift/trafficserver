@@ -141,6 +141,7 @@ rc/trafficserver.service
 .libs/
 
 .svn/
+.vscode/
 
 tsxs
 
@@ -164,3 +165,7 @@ tools/trafficserver.pc
 BUILDS
 DEBUG
 RELEASE
+
+# autest
+tests/env-test/
+tests/_sandbox/

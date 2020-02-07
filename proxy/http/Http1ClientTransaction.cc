@@ -63,26 +63,15 @@ Http1ClientTransaction::set_parent(ProxyClientSession *new_parent)
 void
 Http1ClientTransaction::transaction_done()
 {
-  current_reader = nullptr;
-  // If the parent session is not in the closed state, the destroy will not occur.
   if (parent) {
-    parent->destroy();
-    parent = nullptr;
-  }
-}
-
-void
-Http1ClientTransaction::destroy()
-{
-  if (current_reader) {
-    current_reader->ua_session = nullptr;
-    current_reader             = nullptr;
+    static_cast<Http1ClientSession *>(parent)->release_transaction();
   }
 }
 
 bool
 Http1ClientTransaction::allow_half_open() const
 {
-  return current_reader ? current_reader->t_state.txn_conf->allow_half_open > 0 : true;
+  // Check with the session to make sure the underlying transport allows the half open scenario
+  return static_cast<Http1ClientSession *>(parent)->allow_half_open();
 }
 
