@@ -174,8 +174,6 @@ public:
     return get_transact_count();
   }
 
-  bool allow_half_open() const override;
-
 protected:
   uint16_t outbound_port;
   IpAddr outbound_ip4;

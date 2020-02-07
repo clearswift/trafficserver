@@ -8219,6 +8219,7 @@ _conf_to_memberp(TSOverridableConfigKey conf, OverridableHttpConfigParams *overr
  case TS_CONFIG_HTTP_ALLOW_HALF_OPEN:
     typ = OVERRIDABLE_TYPE_INT;
     ret = &overridableHttpConfig->allow_half_open;
+    break;
   case TS_CONFIG_HTTP_ALLOW_MULTI_RANGE:
     ret = &overridableHttpConfig->allow_multi_range;
     break;
