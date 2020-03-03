@@ -1405,6 +1405,9 @@ SSLNetVConnection::sslClientHandShakeEvent(int &err)
     Debug("ssl.error", "SSLNetVConnection::sslClientHandShakeEvent, SSL_ERROR_SSL");
     TraceIn(trace, get_remote_addr(), get_remote_port(),
             "SSL client handshake ERROR_SSL: sslErr=%d, ERR_get_error=%ld (%s) errno=%d", ssl_error, e, buf, errno);
+
+    // Clearswift - remove SSL error logging
+    /*
     if (e) {
       if (this->options.sni_servername) {
         Error("SSL connection failed for '%s': %s", this->options.sni_servername.get(), buf);
@@ -1413,7 +1416,8 @@ SSLNetVConnection::sslClientHandShakeEvent(int &err)
         ats_ip_ntop(this->get_remote_addr(), buff, INET6_ADDRSTRLEN);
         Error("SSL connection failed for '%s': %s", buff, buf);
       }
-    }
+    }*/
+
     return EVENT_ERROR;
   } break;
   }
